@@ -4,7 +4,7 @@ AAT Analysis Part 1 - QIIME Processing
 Bioinformatic Processing Steps in QIIME
 =======================================
 
-Need to Start with fastq files (etiehr stored on local computer or downloaded from NCBI SRA) \# Notes these files contain both AAT and NEC files Run all qiime files in command line (Terminal, etc) All .qza and .qzv files can be viewed on view.qiime2.org (.qza artifacts, .qzv visualization)
+Need to start with fastq files (etiehr stored on local computer or downloaded from NCBI SRA) \# Notes these files contain both AAT and NEC files Run all qiime files in command line (Terminal, etc) All .qza and .qzv files can be viewed on view.qiime2.org (.qza artifacts, .qzv visualization)
 
 It is helpful to review background on QIIME before starting to understand the overall proces flow, see <https://docs.qiime2.org/2020.8/tutorials/moving-pictures/>
 
@@ -116,8 +116,8 @@ qiime demux summarize \
 ##288samples, range seq from 6-149512 med22115 - SAME, same samples TA1RV1 at bottom
 ```
 
-Step 3. Denoise using DADA2 (remove low quality reads)
-------------------------------------------------------
+Step 3. Denoise using DADA2
+---------------------------
 
 Removes/corrects for "noisey" reads - removes low quality regions of the sequences, chimeras, etcs THis is based on results from Interactive Quality Plot from demux.qzc readout - need to explore and create your own cut-off point --p-trim-left m, which trims off the first m bases of each sequence (based on quality of initial few reads) --p-trunc-len n which truncates each sequence at position n, based on where quality starts to drop off For this dataset, there was high quality scores for intial reads (keep all, trim 0), but start to decrease at end - kepp up to 300 (most)
 
@@ -193,7 +193,7 @@ qiime feature-table tabulate-seqs \
 ```
 
 Step 5. Match to Phylogeny
-==========================
+--------------------------
 
 Needed for any phylogenic -based metric analysis (Faith's, weight UniFrac, etc). The pipeline uses the mafft program to perform a multiple sequence alignment of the sequences in our FeatureData\[Sequence\] to create a FeatureData\[AlignedSequence\] QIIME 2 artifact. Next, the pipeline masks (or filters) the alignment to remove positions that are highly variable. These positions are generally considered to add noise to a resulting phylogenetic tree. Following that, the pipeline applies FastTree to generate a phylogenetic tree from the masked alignment. The FastTree program creates an unrooted tree, so in the final step in this section midpoint rooting is applied to place the root of the tree at the midpoint of the longest tip-to-tip distance in the unrooted tree.
 
@@ -273,5 +273,5 @@ Now you have all your three main files needed for analysis
 
 #### 3. Phylogeny Table (how taxa are related to eachother phylogenetically)
 
-Next STEP is moving these files into R for furhter processing and analysis
-==========================================================================
+Next STEP is moving these files into R for further processing and analysis
+--------------------------------------------------------------------------
