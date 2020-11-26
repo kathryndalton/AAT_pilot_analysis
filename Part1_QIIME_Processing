@@ -6,7 +6,8 @@ Run all qiime files in command line (Terminal, etc)
 All .qza and .qzv files can be viewed on view.qiime2.org (.qza artifacts, .qzv visualization)
 
 
-It is helpful to review background on QIIME before starting to understand the overall proces flow, see https://docs.qiime2.org/2020.8/tutorials/moving-pictures/
+It is helpful to review background on QIIME before starting to understand the overall proces flow, see 
+https://docs.qiime2.org/2020.8/tutorials/moving-pictures/
 
 
 ## Overview of Steps
@@ -33,7 +34,8 @@ http://qiime.org/install/install.html
 Will need to change "Downloads" and "Dropbox" to whereever you saved your files
 Also make sure names of files (barcode_paired_end, etc) matches files name
 
-QIIME 1 is needed since are sequencing files are dual_indexed, meaning the forward and reverse sequencing primers have different barcodes and we need to uniquely match based on BOTH of these barcode. QIIME2 is apparently working on incorporating this feature - will update this file if they do.
+QIIME 1 is needed since are sequencing files are dual_indexed, meaning the forward and reverse sequencing primers have different barcodes and we need 
+to uniquely match based on BOTH of these barcode. QIIME2 is apparently working on incorporating this feature - will update this file if they do.
 
 ```{bash, include=TRUE}
 ############################################
@@ -72,9 +74,12 @@ qiime tools import \
 
 ## Step 2. Demultiplexing into QIIME
 
-Demultiplexing is the process of matching the sequences to our samples based on barcodes added during the sequencing process. For this, we need not only the sequences, but the metadata from the sequencing facility which will have the unique barcodes for every sample. Our samples are paired-end reads, meaning there are forward and reads per sample. 
+Demultiplexing is the process of matching the sequences to our samples based on barcodes added during the sequencing process. For this, we need not only 
+the sequences, but the metadata from the sequencing facility which will have the unique barcodes for every sample. Our samples are paired-end reads, 
+meaning there are forward and reads per sample. 
 
-For quality control, we'll generate a summary of the demultiplexing results. This allows you to determine how many sequences were obtained per sample, and also to get a summary of the distribution of sequence qualities at each position in your sequence data.
+For quality control, we'll generate a summary of the demultiplexing results. This allows you to determine how many sequences were obtained per sample, 
+and also to get a summary of the distribution of sequence qualities at each position in your sequence data.
 
 
 ```{bash, include=TRUE}
@@ -161,7 +166,9 @@ qiime feature-table tabulate-seqs \
 
 ## Step 4. Seperate AAT samples from NEC samples (or other study samples)
 
-Currently these sequences and feature table combine both samples from AAT with NEC (run togehter on sample batch / plates). Need to seperate them out before prcoeeding further with denoising and analysis. We are filtering samples by the full metatable table, where any samples not listed in this file are removed.
+Currently these sequences and feature table combine both samples from AAT with NEC (run togehter on sample batch / plates). Need to seperate them 
+out before prcoeeding further with denoising and analysis. We are filtering samples by the full metatable table, where any samples not listed in this 
+file are removed.
 
 
 ```{bash, include=TRUE}
@@ -199,7 +206,11 @@ qiime feature-table tabulate-seqs \
 # Step 5. Match to Phylogeny
 
 Needed for any phylogenic -based metric analysis (Faith's, weight UniFrac, etc).
-The pipeline uses the mafft program to perform a multiple sequence alignment of the sequences in our FeatureData[Sequence] to create a FeatureData[AlignedSequence] QIIME 2 artifact. Next, the pipeline masks (or filters) the alignment to remove positions that are highly variable. These positions are generally considered to add noise to a resulting phylogenetic tree. Following that, the pipeline applies FastTree to generate a phylogenetic tree from the masked alignment. The FastTree program creates an unrooted tree, so in the final step in this section midpoint rooting is applied to place the root of the tree at the midpoint of the longest tip-to-tip distance in the unrooted tree.
+The pipeline uses the mafft program to perform a multiple sequence alignment of the sequences in our FeatureData[Sequence] to create a 
+FeatureData[AlignedSequence] QIIME 2 artifact. Next, the pipeline masks (or filters) the alignment to remove positions that are highly variable. 
+These positions are generally considered to add noise to a resulting phylogenetic tree. Following that, the pipeline applies FastTree to generate a 
+phylogenetic tree from the masked alignment. The FastTree program creates an unrooted tree, so in the final step in this section midpoint rooting is 
+applied to place the root of the tree at the midpoint of the longest tip-to-tip distance in the unrooted tree.
 
 
 ```{bash, include=TRUE}
@@ -221,7 +232,8 @@ We need to assign taxonomy to the sequences in our feature table.
 Can use an already trained (created) classifer (reference databse), but it is better to "train" one on your dataset.
 #### This is a multi-step process which take over a day to run!
 
-Before you run this, you need to download the full taxonomy reference database either from Greengenes or SILVA (or other site) - I've found Greengenes better at detecting Staph species. 
+Before you run this, you need to download the full taxonomy reference database either from Greengenes or SILVA (or other site) - 
+I've found Greengenes better at detecting Staph species. 
 Do this by going to 
 https://docs.qiime2.org/2020.8/data-resources/
 - Go to Marker Gene Reference Databases -> Greenegenes (16S rRNA)
@@ -257,7 +269,8 @@ qiime tools import \
 --output-path ref-taxonomy.qza
 # Extract Reference Reads
 # sequence reads that we’re trying to classify are 300-base single-end reads that were amplified with the 27F/534R primer pair for 16S rRNA gene sequences V1-3
-# optimize for that here by extracting reads from the reference database based on matches to this primer pair, and then slicing the result to 300 bases (-p-trunc-len)
+# optimize for that here by extracting reads from the reference database based on matches to this primer pair, and then slicing the result to 300 bases 
+(-p-trunc-len)
 # min & max length exclude simulated amplicons that are far outside of the anticipated length distribution using those primers / non-targets
 qiime feature-classifier extract-reads \
 --i-sequences 99_otus.qza \
