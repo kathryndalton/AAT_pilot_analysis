@@ -1,0 +1,38 @@
+practice 1"
+================
+
+GitHub Documents
+----------------
+
+This is an R Markdown format used for publishing markdown documents to GitHub. When you click the **Knit** button all R code chunks are run and a markdown file (.md) suitable for publishing to GitHub is generated.
+
+Including Code
+--------------
+
+You can include R code in the document as follows:
+
+``` bash
+
+echo "Hello Bash!"
+pwd
+```
+
+    ## Hello Bash!
+    ## /Users/kathryndalton/Documents/GitHub/AAT_pilot_analysis
+
+Including Plots
+---------------
+
+You can also embed plots, for example:
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+Optional Step 7: Manually BLAST Staphlococcus samples to species level
+======================================================================
+
+While our taxonomic assignment is good, its not perfect. It is recommended to evaluate the composition of your samples to assess classification of any specific genera / species of concern in your analysis. \#\#\#\# If speciation doesn't matter in your analysis you can skip this step In this case we care about the Staphylococcus genus and want to be able to determine differences at the species level. While our initial taxonomic assignment was good, there were still many taxa assigned to the Staph genus but without a species assignment. We can manually isolate these taxa and enter the sequences into the NCBI database to determine most likely match.
+
+There is a way to do this using a full file, but I'm still working on the code. At this stage, you have to manually copy and paste the sequnce and type in the likely species in a table (excel or txt file).
+
+``` bash
+```

@@ -44,7 +44,7 @@ Also make sure names of files (barcode_paired_end, etc) matches files name
 
 QIIME 1 is needed since are sequencing files are dual_indexed, meaning the forward and reverse sequencing primers have different barcodes and we need to uniquely match based on BOTH of these barcode. QIIME2 is apparently working on incorporating this feature - will update this file if they do.
 
-```{bash, include=TRUE}
+```{bash, echo=TRUE}
 ############################################
 #Prep
 source activate qiime2-2019.7
@@ -86,7 +86,7 @@ Demultiplexing is the process of matching the sequences to our samples based on 
 For quality control, we'll generate a summary of the demultiplexing results. This allows you to determine how many sequences were obtained per sample, and also to get a summary of the distribution of sequence qualities at each position in your sequence data.
 
 
-```{bash, include=TRUE}
+```{bash, echo=TRUE}
 
 ## Step 2: Demultiplexing
 
@@ -136,7 +136,7 @@ ERROR RUNNING THIS IN R TERMINAL - NEED TO RUN IN SEPERATE TERMINAL WINDOW!! can
 
 #### End result = Feature Table
 
-```{bash, include=TRUE}
+```{bash, echo=TRUE}
 
 # Step 3: Denoise
 qiime dada2 denoise-single \
@@ -173,7 +173,7 @@ qiime feature-table tabulate-seqs \
 Currently these sequences and feature table combine both samples from AAT with NEC (run togehter on sample batch / plates). Need to seperate them out before prcoeeding further with denoising and analysis. We are filtering samples by the full metatable table, where any samples not listed in this file are removed.
 
 
-```{bash, include=TRUE}
+```{bash, echo=TRUE}
 
 qiime feature-table filter-samples \
 --i-table table.qza \
@@ -211,7 +211,7 @@ Needed for any phylogenic -based metric analysis (Faith's, weight UniFrac, etc).
 The pipeline uses the mafft program to perform a multiple sequence alignment of the sequences in our FeatureData[Sequence] to create a FeatureData[AlignedSequence] QIIME 2 artifact. Next, the pipeline masks (or filters) the alignment to remove positions that are highly variable. These positions are generally considered to add noise to a resulting phylogenetic tree. Following that, the pipeline applies FastTree to generate a phylogenetic tree from the masked alignment. The FastTree program creates an unrooted tree, so in the final step in this section midpoint rooting is applied to place the root of the tree at the midpoint of the longest tip-to-tip distance in the unrooted tree.
 
 
-```{bash, include=TRUE}
+```{bash, echo=TRUE}
  
  # Phylogeny
  qiime phylogeny align-to-tree-mafft-fasttree \
@@ -252,7 +252,7 @@ The we filter the reference database according to our sequencing protocols - thi
 May want to confirm with sequencing facility what primers they used
 
 
-```{bash}
+```{bash, echo=TRUE}
 # Creating a Pre-Trained Classifier ##
 ## import downloaded reference files
 qiime tools import \
