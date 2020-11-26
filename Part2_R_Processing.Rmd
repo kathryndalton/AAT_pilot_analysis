@@ -15,7 +15,7 @@ This is an R Markdown format used for publishing markdown documents to GitHub. W
 
 You can include R code in the document as follows:
 
-```{bash}
+```{bash, echo=FALSE}
 
 echo "Hello Bash!"
 pwd

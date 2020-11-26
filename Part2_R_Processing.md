@@ -11,12 +11,6 @@ Including Code
 
 You can include R code in the document as follows:
 
-``` bash
-
-echo "Hello Bash!"
-pwd
-```
-
     ## Hello Bash!
     ## /Users/kathryndalton/Documents/GitHub/AAT_pilot_analysis
 
