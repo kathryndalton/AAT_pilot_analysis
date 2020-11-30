@@ -22,7 +22,7 @@ It is helpful to review background on QIIME before starting to understand the ov
 #### 1. Import files into QIIME
 #### 2. Demultiplex using DADA2 (match sequences to samples)
 #### 3. Denoise using DADA2 (remove low quality reads)
-#### 4. Seperate AAT samples from NEC samples (or other study samples)
+#### 4. Seperate AAT samples from NEC samples (or other study samples) + save seq tsv file!
 #### 5. Match to Phylogeny
 #### 6. Match to Taxonomy
 #### Optional Step 7: Manually BLAST Staphlococcus samples to species level
@@ -32,6 +32,7 @@ It is helpful to review background on QIIME before starting to understand the ov
 #### Feature Table
 #### Taxonomy Table
 #### Phylogeny Table
+#### Raw Sequences as tsv file
 
 
 
@@ -202,6 +203,21 @@ qiime feature-table tabulate-seqs \
 --i-data aat-rep-seqs.qza \
 --o-visualization aat-rep-seqs.qzv
 #Seq count - all 300/samples, total 14183
+
+
+## IMPORTANT NEXT STEP ##
+
+mkdir extracted-seqs
+qiime tools extract \
+  --input-path aat-rep-seqs.qza \
+  --output-path extracted-seqs
+
+## copy where final extracted fiel went (will show up in confirm message)
+## Should be extracted-seqs/2b6139a8-ec35-44dc-ad15-8accb648c7e7
+## confirm alphanumeric filepath
+## final path : ~/Dropbox/AAT_microbiome/16S/extracted-seqs/2b6139a8-ec35-44dc-ad15-8accb648c7e7/data/dna-sequences.fasta
+## move the file we want (raw seq matched with taxa names) into main directory
+mv extracted-seqs/2b6139a8-ec35-44dc-ad15-8accb648c7e7/data/dna-sequences.fasta sequences.tsv
 
 ```
 

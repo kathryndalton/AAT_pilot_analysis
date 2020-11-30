@@ -1,5 +1,5 @@
 ---
-title: practice 1"
+title: "AAT Analysis Part 2 - R Processing"
 output: github_document
 ---
 
@@ -7,29 +7,233 @@ output: github_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## GitHub Documents
+# Part 2 - Post Processing in R
 
-This is an R Markdown format used for publishing markdown documents to GitHub. When you click the **Knit** button all R code chunks are run and a markdown file (.md) suitable for publishing to GitHub is generated.
+###Need to do Part 1 before starting, where you'll end up with 
+##### 1. Feature Table (list of taxa numbers by sample)
+##### 2. Taxonomy Table (what bacteria matches what taxa)
+##### 3. Phylogeny Table (how taxa are related to eachother phylogenetically)
+##### 4. Raw AAT Sequences as tsv file (matched with taxa name)
 
-## Including Code
+In this part, we'll be working on moving all our QIIME objects into Phyloseq and doing additional quality control
 
-You can include R code in the document as follows:
+## Overview of Steps
+#### 1. Prep and Move files
+#### 2. Create initial phyloseq object (which combines feature table, taxonomy table, phylogeny table, and metadata)
+#### 3. Decontamination
+#### 4. Manually BLAST Staphlococcus samples to species level
 
-```{bash, echo=TRUE, eval=FALSE}
+## End Product
+#### Final Phyloseq object (with 13734 taxa and 224 samples)
 
-echo "Hello Bash!"
-pwd
+
+
+## Step 1: Prep R workpace and bring in QIIME files
+
+Start by downloading packages we'll need just for this section (others needed in next section). 
+Make sure to change the name of your working directory, previous file names (from earlier QIIME tutorial), metadata files, etc. 
+ALso ensure variable in metatable match code (for qPCR data)
+
+```{r, echo=TRUE }
+## Prep ##
+setwd("~/Dropbox/AAT_microbiome/16S")
+library(phyloseq)
+library("qiime2R")
+library(decontam)
+library("vegan")
+library("tidyr")
+library(plyr)
+library("dplyr")
+library(readr)
+library("ggplot2")
+library(reshape)
+library(tibble)
+seqtab<-read_qza("aat-table.qza")
+tree<-read_qza("rooted-tree-aat.qza")
+taxonomy<-read_qza("aat-gg-taxonomy.qza")
+taxtable<-taxonomy$data %>% as_tibble() %>% separate(Taxon, sep="; ", c("Kingdom","Phylum","Class","Order","Family","Genus","Species")) #convert the table into a tabular split version
+aat_lab_metadata <-read_tsv("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/AAT_lab_metadata.txt") 
+aat_lab_metadata$X16S_qPCR_copy_num_per_ul_DNA<-as.numeric(aat_lab_metadata$X16S_qPCR_copy_num_per_ul_DNA)
 
 ```
 
-## Including Plots
+## Step 2: Create Preliminary Phyloseq Object
 
-You can also embed plots, for example:
+Combine all our objects into a phyloseq object. 
+For more information on phyloseq, visit https://joey711.github.io/phyloseq/
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r, echo=TRUE}
+
+phylo_prelim<-phyloseq(
+  otu_table(seqtab$data, taxa_are_rows = T), 
+  phy_tree(tree$data), 
+  tax_table(as.data.frame(taxtable) %>% select(-Confidence) %>% column_to_rownames("Feature.ID") %>% as.matrix()),
+  sample_data(aat_lab_metadata %>% as.data.frame() %>% column_to_rownames("#SampleID"))
+)
+phylo_prelim
+dim(seqtab$data)
+dim(aat_lab_metadata)
+sample_names(phylo_prelim)
+table(sample_data(phylo_prelim)$batch)
+#table missing from DADA2 - #Removed TA001-RV1-Dust-Pre, TA001-RV1-Dost-Post
+
+#Simple Phyloseq Analysis
+plot_bar(phylo_prelim, fill = "Family")
+plot_tree(phylo_prelim, color="HostSpecies", label.tips="taxa_names", ladderize="left", plot.margin=0.3)
+plot_heatmap(phylo_prelim)
+plot_heatmap(phylo_prelim, taxa.label="Phylum")
+
+#Inspect Library Size
+df <- as.data.frame(sample_data(phylo_prelim)) # Put sample_data into a ggplot-friendly data.frame
+df$LibrarySize <- sample_sums(phylo_prelim)
+df <- df[order(df$LibrarySize),]
+df$Index <- seq(nrow(df))
+ggplot(data=df, aes(x=Index, y=LibrarySize, color=Study)) + 
+  geom_point()
+ggplot(data=df, aes(x=Index, y=LibrarySize, color=SampleType)) + 
+  geom_point()
+#Index = ordered based on library size
+
+```
 
 
-# Optional Step 7: Manually BLAST Staphlococcus samples to species level
+## Step 3. Decontamination
+
+Used to ID contaminant sequences based on frequency of each sequence/OTU/ASV 
+in the input feature tables as a function of the concentration of amplified DNA
+Needs: feature table, concentration DNA, negative controls
+Method - based on either conc or negs, or combined(using Fishers)
+ID contaminants from sample data (con/negs) then go back to feature table to remove
+Best way to do it is to start with a phyloseq object - a file that combines otu feature table + sample data + tax data
+
+
+Overview of Stages in decontamination process and results
+|Stage 1 | ID contam using combo batch for lab controls + DNA conc data | 166 contam|
+|Stage 2 | ID contam using combo batch for lab controls + qPCR conc data | 149 contam|
+|Stage 3 | Combine steps 2 + 3 - ID contaminants found on EITHER methods | 261 contam (54 shaared)|
+|Stage 4 | Remove those contaminants from phyloseq object | 13922 taxa remain|
+|Stage 5 | ID contaminants in new phyloseq objects using field blanks - loose ID | 188 contam|
+|Stage 6 | Remove field contaminants to get final non-contaminated phyloseq object | 13734 taxa remain| 
+#### phylo.final  = final object
+
+### FYI ### 
+See seperate contamination file for more details on the stages above and how I selected those specific stages (versus other combinations). Important to note that there was little difference between treating the sequencing, library prep, and extraction controls separately versus combining all lab controls (Extract controls is primary driver of lab controls - seq&library controls have very little contamination)
+
+
+```{r}
+##Stage 1 - ID contam using combo batch for lab controls + DNA conc data 
+sample_data(phylo_prelim)$is.neg <- sample_data(phylo_prelim)$Study=="control"
+contamdf.combobatch <- isContaminant(phylo_prelim, method="combined", neg="is.neg", conc="X16S_final_library_concentration_ng_ul", batch = "batch")
+table(contamdf.combobatch$contaminant)  #using dna 166
+head(which(contamdf.combobatch$contaminant)) # 832nd most abundant
+taxtable1<-taxtable %>% select(-Confidence) %>% column_to_rownames("Feature.ID")
+contam_asvs1 <- row.names(contamdf.combobatch[contamdf.combobatch$contaminant == TRUE, ])
+contam_taxa1<-taxtable1[row.names(taxtable1) %in% contam_asvs1, ]
+sort(table(contam_taxa1$Genus), decreasing = TRUE)
+
+##Stage 2 - ID contam using combo batch for lab controls + qPCR conc data
+phylo_qpcr <- prune_samples(!is.na(sample_data(phylo_prelim)$X16S_qPCR_copy_num_per_ul_DNA), phylo_prelim)
+phylo_qpcr #should have 233 samples (-3 NA samples)
+phylo_prelim
+contamdf.combobatch.qpcr <- isContaminant(phylo_qpcr, method="combined", neg="is.neg", conc="X16S_qPCR_copy_num_per_ul_DNA", 
+                                          batch = "batch")
+table(contamdf.combobatch.qpcr$contaminant) #using qpcr 149
+head(which(contamdf.combobatch.qpcr$contaminant))  #591st most abundant
+contam_asvs2 <- row.names(contamdf.combobatch.qpcr[contamdf.combobatch.qpcr$contaminant == TRUE, ])
+contam_taxa2<-taxtable1[row.names(taxtable1) %in% contam_asvs2, ]
+sort(table(contam_taxa2$Genus), decreasing = TRUE)
+
+##Stage 3 - Combine steps 2 + 3 - ID contaminants found on EITHER methods 
+c1<-rownames_to_column(contamdf.combobatch, var="rowname")
+c2<-rownames_to_column(contamdf.combobatch.qpcr, var="rowname")
+c1$contaminant.d<-c1$contaminant
+c2$contaminant.q<-c2$contaminant
+c3<-full_join(c1,c2, by="rowname") #x=dna, y=qpcr  eg. c3$contaminant.x = c3$contaminant.d
+table(c3$contaminant.d)
+table(c3$contaminant.q) 
+c3$contaminant.both<-ifelse(c3$contaminant.d==TRUE&c3$contaminant.q==TRUE, TRUE, FALSE)  
+c3$contaminant.either<-ifelse(c3$contaminant.d==TRUE, TRUE, 
+                              ifelse(c3$contaminant.q==TRUE, TRUE, FALSE))  
+table(c3$contaminant.both)  # 54 shared between DNA + qPCR results
+table(c3$contaminant.either)  #261 total contaminants IDed using either conc method
+
+##Stage 4 - Remove those contaminants from phyloseq object 
+phylo_prelim
+ps.noncontam.labcontconc <- prune_taxa(!c3$contaminant.either, phylo_prelim)
+ps.noncontam.labcontconc # taxa should be less (original 14183 - 261above = 13922 total taxa)
+
+##Stage 5 - ID contaminants in new phyloseq objects using field blanks
+sample_data(ps.noncontam.labcontconc)$field.control <- sample_data(ps.noncontam.labcontconc)$SampleType=="Environmental Blank"
+table(sample_data(ps.noncontam.labcontconc)$field.control)  #Missing TA001 RV1 Blank == 12 total blanks
+contamdf.field <- isContaminant(ps.noncontam.labcontconc, method="prevalence", neg="field.control")
+table(contamdf.field$contaminant) #188 contaminates IDed
+head(which(contamdf.field$contaminant)) #705th most abundant is top one
+contam_asvs3 <- row.names(contamdf.field[contamdf.field$contaminant == TRUE, ])
+contam_taxa3<-taxtable1[row.names(taxtable1) %in% contam_asvs3, ]
+sort(table(contam_taxa2$Genus), decreasing = TRUE)
+
+##Stage 6 - Remove field contaminants to get final non-contaminated phyloseq object
+phylo_prelim   #started with 14183 taxa
+ps.noncontam.labcontconc  #went down to 13922
+phylo.final <- prune_taxa(!contamdf.field$contaminant, ps.noncontam.labcontconc)
+phylo.final # final tally 13734   (13922 - 188)
+
+## save new feature table as backup
+otutable.final<-as.data.frame(otu_table(phylo.final))
+write_tsv(otutable.final, "aat-otutable_final.tsv")
+
+
+### not this phyloseq object DOESN"T have full metadata - 
+## need to download full metadata sperately and re-upload
+
+
+### FINAL PHYLOSEQ OBJECT ###
+aat_metadata <-read_tsv("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/AAT_workbook_contact.txt") 
+phylo.final<-phyloseq(
+  otu_table(otutable.final, taxa_are_rows = T), 
+  phy_tree(tree$data), 
+  tax_table(as.data.frame(taxtable) %>% select(-Confidence) %>% 
+              column_to_rownames("Feature.ID") %>% as.matrix()),
+  sample_data(aat_metadata %>% as.data.frame() %>% column_to_rownames("SampleID"))
+)
+phylo.final
+
+
+
+
+
+###########################################################################################################
+#### Additional Steps to check Decontamination Process
+
+#Checking appropriate p value selection 
+# simplest and most useful evaluation of method is to inspect the distribution of scores assigned by the method.
+#Expectation is that there will be a strong mode at low scores. In the cleanest cases the 
+#distribution will be clearly bimodal, while in other datasets the high-score mode is more wide and 
+#diffuse. However, the low-score mode should be there, and should be used to set the P* score threshold 
+#for identifying contaminants
+hist(contamdf.combobatch$p, 100) #slight bimodal
+hist(contamdf.combobatch.qpcr$p, 100) 
+hist(contamdf.field$p, 100)
+## see seperate decontam file for test of further combinations
+
+### Get list of contaminants
+tax_table(phylo_prelim)[contamdf.combobatch$contaminant,] # to get genera corresponding to contaminants
+ps.contam <- prune_taxa(contamdf.combobatch$contaminant, phylo_prelim) # create a phyloseq objects w just to contaminants
+head(tax_table(ps.contam))
+ps.contam_list<-as.data.frame(tax_table(ps.contam)) 
+#Way 2
+contam <- row.names(contamdf.combobatch[contamdf.combobatch$contaminant == TRUE, ])
+taxtable1<-taxtable %>% column_to_rownames("Feature.ID")
+contam_list<-taxtable1[row.names(taxtable1) %in% contam, ]  %>% select(-Confidence)
+head(contam_list)
+
+
+```
+
+
+
+## Optional Step 4: Manually BLAST Staphlococcus samples to species level
 
 While our taxonomic assignment is good, its not perfect. It is recommended to evaluate the composition of your samples to assess classification of any specific genera / species of concern in your analysis. 
 #### If speciation doesn't matter in your analysis you can skip this step
@@ -37,7 +241,74 @@ In this case we care about the Staphylococcus genus and want to be able to deter
 
 There is a way to do this using a full file, but I'm still working on the code. At this stage, you have to manually copy and paste the sequnce and type in the likely species in a table (excel or txt file).
 
-```{bash}
+```{r, echo=TRUE }
+
+## Set Up ##
+## need taxtable and seqtab from earlier Step 1 
+staph_taxtable<-subset(taxtable, taxtable$Genus=="g__Staphylococcus") %>%
+  subset(.$Species =="s__")
+staph_taxtable[,9]<-NULL
+head(staph_taxtable)
+dim(staph_taxtable) ## 128 un-speciated Staph taxa
+## upload raw sequences that you saved from QIIME
+seqs<-read_tsv("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/sequences.tsv", col_names="Seq")
+seq1<-rownames_to_column(seqs)
+is.odd <- function(v) v %% 2 != 0  
+seq1<-transform(seq1, rowname = as.numeric(rowname))
+class(seq1$rowname)
+seq1$odd<-is.odd(seq1$rowname)
+seq1.name<-subset(seq1, odd==TRUE) %>%
+  dplyr::rename(FeatureID=Seq) %>%
+  mutate(row=c(1:14183)) ## edit to your dimensions of seq1.name & seq1.seq (should be equal)
+seq1.seq<-subset(seq1, odd==FALSE) %>%
+  mutate(row=c(1:14183)) ## edit to your dimensions of seq1.name & seq1.seq (should be equal)
+seq<-merge(x=seq1.seq, y=seq1.name, by="row", all=TRUE) %>% 
+  as_tibble() %>% 
+  separate(FeatureID, sep=">", c("1","Feature.ID"))
+seq[,c(1,2,4,5,6, 8)] <- NULL
+
+
+## Isolate Staph Sequences ##
+staph_seq<-merge(x=seq, y=staph_taxtable, by="Feature.ID", all.y=TRUE, all.x=FALSE) %>%
+  subset(is.na(.$Seq)==FALSE)
+dim(staph_seq)
+write_tsv(staph_seq, path="/Users/kathryndalton/Dropbox/AAT_microbiome/16S/staph_seq_tax_pre", col_names = TRUE)
+
+
+#BLAST results individually - for future need to figure out to get into format to upload as one file
+# https://blast.ncbi.nlm.nih.gov/Blast.cgi?PROGRAM=blastn&PAGE_TYPE=BlastSearch&LINK_LOC=blasthome
+# Make sure to chose "16S ribosomal RNA Sequences" under Database
+## Blast each sequences then copy in top Staph species match within the txt file
+## Save edited file as staph_seq_blast.tsv
+
+## Bring Back Manually Added in BLAST Results
+staph_seq_blast<-read_tsv("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/staph_seq_tax.tsv") %>%
+  dplyr::rename(Feature.ID=Taxa)
+staph_seq_blast$Seq<-NULL
+#need to merge w/ staph_taxtable1 - removing suplicat entries
+staph1<-full_join(x=staph_seq_blast, y=taxtable, by ="Feature.ID", match="first")
+staph1$Kingdom<-ifelse(is.na(staph1$Kingdom.x), staph1$Kingdom.y, staph1$Kingdom.x)
+staph1$Phylum<-ifelse(is.na(staph1$Phylum.x), staph1$Phylum.y, staph1$Phylum.x)
+staph1$Class<-ifelse(is.na(staph1$Class.x), staph1$Class.y, staph1$Class.x)
+staph1$Order<-ifelse(is.na(staph1$Order.x), staph1$Order.y, staph1$Order.x)
+staph1$Family<-ifelse(is.na(staph1$Family.x), staph1$Family.y, staph1$Family.x)
+staph1$Genus<-ifelse(is.na(staph1$Genus.x), staph1$Genus.y, staph1$Genus.x)
+staph1$Species<-ifelse(is.na(staph1$Species.x), staph1$Species.y, staph1$Species.x)
+taxtable_final<-subset(staph1, select= -c(Kingdom.x:Species.y))
+## save final taxable as backup
+write_tsv(as.data.frame(taxtable_final), "aat-taxtable_final.tsv") 
+
+#Bring back to phyloseq object
+phylo.final<-phyloseq(
+  otu_table(otutable.final, taxa_are_rows = T), 
+  phy_tree(tree$data), 
+  tax_table(as.data.frame(taxtable_final) %>% select(-Confidence.y) %>% 
+              column_to_rownames("Feature.ID") %>% as.matrix()),
+  sample_data(aat_metadata %>% as.data.frame() %>% column_to_rownames("SampleID"))
+)
+phylo.final
+
+
 
 ```
 
