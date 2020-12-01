@@ -695,8 +695,7 @@ phylo.final # final tally 13734   (13922 - 188)
 ``` r
 ## save new feature table as backup
 otutable.final<-as.data.frame(otu_table(phylo.final))
-write_tsv(otutable.final, "aat-otutable_final.tsv")
-
+write.table(otutable.final, file="aat-otutable_final.tsv", row.names=TRUE, sep="\t")
 
 ### not this phyloseq object DOESN"T have full metadata - 
 ## need to download full metadata sperately and re-upload

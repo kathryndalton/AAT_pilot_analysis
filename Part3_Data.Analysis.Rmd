@@ -1,0 +1,90 @@
+---
+title: "AAT Analysis Part 3 - Data Analysis"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Part 3 - Data Analysis
+
+Prior to starting this section, need to go through Part 1 (QIIME prep) and Part 2 (R prep)
+End product from both parts:
+#### Final Phyloseq object (phyloseq.final) with 13734 taxa, 224 samples, and 17 variables 
+
+## Overview of Steps:
+#### 1. Absolute and Relative Abundance 
+#### 2. Alpha Diversity
+#### 3. Beta Diversity
+#### 4. Beta Distance
+
+
+## Prep R environment
+
+Set your working directory, activate relevant packages, and re-upload final phyloseq object
+
+```{r, echo=TRUE}
+
+## change to your working directory
+setwd("/Users/kathryndalton/Dropbox/AAT_microbiome/16S")
+
+#Bring up Packages
+library("phyloseq")
+library("vegan")
+library("DESeq2")
+library(btools)
+library("ggplot2")
+library("reshape2")
+library("tidyr")
+library(plyr)  ## need to upload before dpylr 
+library("dplyr")
+library("qiime2R")
+library("tidyverse")
+library(ggpubr)
+library("cowplot")
+library(gridExtra)
+library(grid)
+
+## Final phyloseq 
+seqtab<-read.table("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/aat-otutable_final.tsv", sep = "\t", row.names = 1)
+tree<-read_qza("rooted-tree-aat.qza")
+aat_metadata <-read_tsv("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/AAT_workbook_contact.txt") 
+taxtable_final<-read_tsv("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/aat-taxtable_final.tsv")
+
+phylo.final<-phyloseq(
+  otu_table(seqtab, taxa_are_rows = T), 
+  phy_tree(tree$data), 
+  tax_table(as.data.frame(taxtable_final) %>% select(-Confidence.y) %>% column_to_rownames("Feature.ID") %>% as.matrix()),
+  sample_data(aat_metadata %>% as.data.frame() %>% column_to_rownames("SampleID"))
+)
+phylo.final
+
+### change Confidence.y to just Confidence if not doing additional manual blast step
+
+```
+
+
+
+## Step 1 - Absolute and Relative Abundance
+
+
+
+```{r, echo=TRUE}
+
+
+
+
+
+```
+
+
+
+
+
+
+```{r, echo=TRUE}
+plot(pressure)
+```
+
+
