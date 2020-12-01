@@ -295,6 +295,9 @@ plot_tree(phylo_prelim, color="HostSpecies", label.tips="taxa_names", ladderize=
 plot_heatmap(phylo_prelim)
 ```
 
+    ## Warning in metaMDS(veganifyOTU(physeq), distance, ...): stress is (nearly) zero:
+    ## you may have insufficient data
+
     ## Warning: Transformation introduced infinite values in discrete y-axis
 
 ![](Part2_R_Processing_files/figure-markdown_github/unnamed-chunk-2-3.png)
@@ -1768,14 +1771,14 @@ write_tsv(staph_seq, path="/Users/kathryndalton/Dropbox/AAT_microbiome/16S/staph
 ## Blast each sequences then copy in top Staph species match within the txt file
 ## Save edited file as staph_seq_blast.tsv
 
+
 ## Bring Back Manually Added in BLAST Results
-staph_seq_blast<-read_tsv("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/staph_seq_tax.tsv") %>%
-  dplyr::rename(Feature.ID=Taxa)
+staph_seq_blast<-read_tsv("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/staph_seq_tax.tsv")
 ```
 
     ## Parsed with column specification:
     ## cols(
-    ##   Taxa = col_character(),
+    ##   Feature.ID = col_character(),
     ##   Seq = col_character(),
     ##   Kingdom = col_character(),
     ##   Phylum = col_character(),

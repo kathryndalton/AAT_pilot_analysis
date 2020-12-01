@@ -281,9 +281,9 @@ write_tsv(staph_seq, path="/Users/kathryndalton/Dropbox/AAT_microbiome/16S/staph
 ## Blast each sequences then copy in top Staph species match within the txt file
 ## Save edited file as staph_seq_blast.tsv
 
+
 ## Bring Back Manually Added in BLAST Results
-staph_seq_blast<-read_tsv("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/staph_seq_tax.tsv") %>%
-  dplyr::rename(Feature.ID=Taxa)
+staph_seq_blast<-read_tsv("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/staph_seq_tax.tsv")
 staph_seq_blast$Seq<-NULL
 #need to merge w/ staph_taxtable1 - removing suplicat entries
 staph1<-full_join(x=staph_seq_blast, y=taxtable, by ="Feature.ID", match="first")
