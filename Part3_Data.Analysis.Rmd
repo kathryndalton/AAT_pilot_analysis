@@ -1,5 +1,5 @@
 ---
-title: "AAT Analysis Part 3 - Data Analysis"
+title: "AAT Analysis Part 3 - Data Analysis for Sharing Paper"
 output: github_document
 ---
 
@@ -7,20 +7,23 @@ output: github_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Part 3 - Data Analysis
+# Part 3 - Data Analysis for Microbial Sharing Chapter/Paper
 
 Prior to starting this section, need to go through Part 1 (QIIME prep) and Part 2 (R prep)
 End product from both parts:
 #### Final Phyloseq object (phyloseq.final) with 13734 taxa, 224 samples, and 17 variables 
 
 ## Overview of Steps:
-#### 1. Absolute and Relative Abundance 
-#### 2. Alpha Diversity
-#### 3. Beta Diversity
-#### 4. Beta Distance
+#### 1. Prep your environment and working datasets
+#### 2. Absolute and Relative Abundance 
+#### 3. Alpha Diversity
+#### 4. Beta Diversity
+#### 5. Beta Distance
+
+This is just the analysis for the sharing paper, refer to Part 4 for analysis related to the vet paper.
 
 
-## Prep R environment
+## Step 1 - Prep R environment
 
 Set your working directory, activate relevant packages, and re-upload final phyloseq object
 
@@ -45,6 +48,7 @@ library(ggpubr)
 library("cowplot")
 library(gridExtra)
 library(grid)
+library("cluster")
 
 ## Final phyloseq 
 seqtab<-read.table("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/aat-otutable_final.tsv", sep = "\t", row.names = 1)
@@ -62,17 +66,2218 @@ phylo.final
 
 ### change Confidence.y to just Confidence if not doing additional manual blast step
 
+## Generate new variables
+sample_data(phylo.final)$hostsite<-paste(sample_data(phylo.final)$host, sample_data(phylo.final)$sampletype)
+sample_data(phylo.final)$interv<-ifelse(sample_data(phylo.final)$intervention==0, "Control", "Intervention")
+
+##Quick EDA on dataset to confirm samples are there
+table(sample_data(phylo.final)$host_env, useNA = "always")
+table(sample_data(phylo.final)$sampletype)
+table(sample_data(phylo.final)$hostsite)
+table(sample_data(phylo.final)$intervention, sample_data(phylo.final)$interv, useNA = "always")
+
+## Get working datasets
+phylo.kd<-subset_samples(phylo.final, !is.na(host))
+phylo.kd
+phy.kde<-subset_samples(phylo.final, !is.na(host_env))
+phy.kde
+dog<-subset_samples(phylo.final, host=="dog")
+dog
+kid<-subset_samples(phylo.final, host=="human")
+kid
+env <-subset_samples(phylo.final, sampletype=="Dust")
+env
+
+### Synchronized Colors from all Plots
+colors_pre.post<-c("#E6C81F", "#A31603")
+colors_host<-c("#7AB5F5", "#F86F61", "#025205")
+colors_host_de<-c("#F86F61", "#025205")
+colors_contact<-c("#40a695", "#a067bd", "black")
+colors_visit<-c("#F19C4C", "#455E9E", "black")
+
+
 ```
 
 
 
 ## Step 1 - Absolute and Relative Abundance
 
+These are the analyzes that went directly towards either a) the dissertation chapters or b) the journal articles. All other sub-analyzes can be found under the rough AAT_Analysis_Phyloseq_RelAbun.R script. This includes other EDA figures, more DESeq tests, and further staph sub-analyses.
+
+End tables/figures: 
+* rel abund figure by host
+* table with rel abund top genera, by host/site
+* rel abund figure in kids pre/post & cont/interv
+* absol abun Staph species by host
 
 
 ```{r, echo=TRUE}
 
+## quick EDA top genus 
+TopNOTUs<- names(sort(taxa_sums(phy.kde), TRUE)[1:20])
+phy.kde20 <- prune_taxa(TopNOTUs, phy.kde)
+tax_table(phy.kde20) 
+plot_bar(phy.kde20, "host_env", fill="sampletype", facet_grid=~Genus)
+plot1<-plot_bar(phy.kde20, "host_env", fill="Genus")
+plot1
+plot1+geom_bar(stat="identity", position="stack")
+plot2<-plot_bar(phy.kde20, "hostsite", fill="Genus")
+plot2
+plot2+geom_bar(stat="identity", position="stack")
+plot2<-plot_bar(phy.kde20, "hostsite", fill="Genus")
+plot2
+plot2+geom_bar(stat="identity", position="stack")
+plot2+geom_bar(stat="identity", position="stack") +
+  facet_grid(.~interv)
+# same thing but another way to evaluate
+subset_samples(phy.kde20, host=="human") %>% plot_bar("Genus", "Abundance")
+subset_samples(phy.kde20, host=="dog") %>% plot_bar("Genus", "Abundance")
+subset_samples(phy.kde20, host_env=="env") %>% plot_bar("Genus", "Abundance")
 
+## Get Relative Abundance
+ps <- tax_glom(phy.kde, "Genus")
+ps0 <- transform_sample_counts(ps, function(x) x / sum(x))
+sample_data(ps0)$hostsite<-paste(sample_data(ps0)$host_env, sample_data(ps0)$sampletype)
+## plot all samples
+df.all<- psmelt(ps0)
+ggplot(df.all, aes(Sample, Abundance, fill = Genus)) +
+  geom_col() +
+  guides(fill=FALSE) +
+  ggtitle("kids, dogs, env")
+df.all.kid<-filter(df.all, host=="human")
+ggplot(df.all.kid, aes(Sample, Abundance, fill = Genus)) +
+  geom_col() +
+  guides(fill=FALSE) +
+  ggtitle("just kids")
+## relative abundance based on host and site
+ps1 <- merge_samples(ps0, "hostsite")
+ps2 <- transform_sample_counts(ps1, function(x) x / sum(x))
+plot_bar(ps2, fill="Genus")
+plot_bar(ps2, fill="Phylum")
+df <- psmelt(ps2)
+ggplot(df, aes(Sample, Abundance, fill = Genus)) +
+  geom_col() +
+  guides(fill=FALSE)
+top_phyla <- df %>%
+  group_by(Sample, Genus) %>%
+  summarize(Mean = mean(Abundance)) %>%
+  arrange(-Mean)
+head(top_phyla)
+top20 <- top_phyla$Genus[1:20]
+df0 <- df %>%
+  mutate(Genus = fct_other(Genus, top20))
+ggplot(df0, aes(Sample, Abundance, fill = Genus)) +
+  geom_col()
+## clean up Genus name
+levels(df0$Genus) <- sub("g__", "", levels(df0$Genus))
+head(df0)
+
+### For Table with relative abundance by Host/Site
+df.above03<-filter(df, Abundance>=0.03) #46 --- use this one
+df.above03x<- df.above03 %>% group_by(Sample, Genus) %>% summarise(
+  mean(Abundance))
+knitr::kable(df.above03x, format="html")
+
+
+#############################################################################################################
+## DESeq Differential Abundance Tests ##
+
+# This is only a few of the tests conducted on the dataset (see full AAT_Analysis_Phyloseq_RelAbun.R for full EDA)
+
+## on figure - marked as sig:
+# by all host/site
+# staph, strept in kids, staph and moraxella in dogs N, proph and conch in oral, corynebac in P, coryne in dust
+# in kids by p/p, c/i:
+# strept in low post control, strept in high pre, staph in high post, stept in low pre, staph in low post intervention
+
+
+## By Host and Site
+
+#Run actual test
+#1) convert phyloseq object to DESeq Dataset with dispersions estimated, using experiment design factor 
+phy.kde_hostsite = phyloseq_to_deseq2(phy.kde, ~ hostsite) 
+#2) get geometric means
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+alpha = 0.0001
+geoMeans = apply(counts(phy.kde_hostsite), 1, gm_mean)
+phy.kde_hostsite = estimateSizeFactors(phy.kde_hostsite, geoMeans = geoMeans)
+#3) does rest of test, using default framework
+phy.kde_hostsite = DESeq(phy.kde_hostsite, test="Wald", fitType="parametric") ## fit versus "local" - log regression
+#default multiple-inference correction is Benjamini-Hochberg
+phy.kde_hostsite_res = results(phy.kde_hostsite, cooksCutoff = FALSE)
+summary(phy.kde_hostsite_res$padj)
+##using parametric - significant differences hostsite, min padj = 0, mean 0.52, max 0.98
+phy.kde_hostsite.1 = DESeq(phy.kde_hostsite, test="Wald", fitType="local") 
+phy.kde_hostsite_res.1 = results(phy.kde_hostsite.1, cooksCutoff = FALSE)
+summary(phy.kde_hostsite_res.1$padj) # same results min padj = 0, mean 0.52, max 0.98
+
+# change (MAP): condition treated vs untreated", meaning that the estimates are of log2(treated /untreated) 
+## The lfcSE gives the standard error of the log2FoldChange
+# stat is the Wald statistic: the log2FoldChange divided by lfcSE
+
+sigtab_phy.kde_hostsite = phy.kde_hostsite_res[which(phy.kde_hostsite_res$padj < alpha), ]
+sigtab_phy.kde_hostsite = cbind(as(sigtab_phy.kde_hostsite, "data.frame"),
+                                as(tax_table(phy.kde)[rownames(sigtab_phy.kde_hostsite), ], "matrix"))
+head(sigtab_phy.kde_hostsite)
+dim(sigtab_phy.kde_hostsite) ### 115 different taxa by host and site from all taxa
+
+## Just top Genera
+sigtab_phy.kde_hostsite_top<-sigtab_phy.kde_hostsite %>% 
+  rownames_to_column(var="OTU") %>%
+  subset(OTU %in% TopNOTUs) 
+dim(sigtab_phy.kde_hostsite_top) ## 11 of the top genera different
+## With mean absolute abundances
+df.absol<- psmelt(phy.kde)
+df.absol.hs <- df.absol %>% 
+  group_by(OTU, hostsite) %>% 
+  summarise(mean(Abundance)) %>%
+  spread(., "hostsite", "mean(Abundance)")
+sigtab_phy.kde_hostsite_top <- merge(sigtab_phy.kde_hostsite_top, df.absol.hs, by="OTU", all.x=TRUE, all.y=FALSE)
+knitr::kable(sigtab_phy.kde_hostsite_top, format="html")
+## Just Staph
+sigtab_phy.kde_hostsite_staph<-filter(sigtab_phy.kde_hostsite, Genus=="g__Staphylococcus")
+dim(sigtab_phy.kde_hostsite_staph) ## 7 Staph species diifer - Almost all epi or pseudo + 1 schleif
+sigtab_phy.kde_hostsite_staph <- merge(sigtab_phy.kde_hostsite_staph, df.absol.hs, by.x=0, by.y="OTU", all.x=TRUE, all.y=FALSE)
+knitr::kable(sigtab_phy.kde_hostsite_staph, format="html")
+
+
+###########################################################################################################################
+
+## Differential Abundance Testing Just within Kids ##
+
+## Just Kids Stratified by Visit Type and Contact - two bars one pre one post
+kid.c = subset_samples(kid, intervention==0)
+kid.gen.c <- tax_glom(kid.c, "Genus")
+kg1.c <- transform_sample_counts(kid.gen.c, function(x) x / sum(x))
+# need to create new variable combo pre/post and contact level
+sample_data(kg1.c)$prepost_contact<-paste(sample_data(kg1.c)$pre_post, sample_data(kg1.c)$contactscore_ppl)
+kg2.c <- merge_samples(kg1.c, "prepost_contact")
+kg3.c <- transform_sample_counts(kg2.c, function(x) x / sum(x))
+df.kg.c <- psmelt(kg3.c)
+top_phyla.kg.c <- df.kg.c %>%
+  group_by(Sample, Genus) %>%
+  summarize(Mean = mean(Abundance)) %>%
+  arrange(-Mean)
+head(top_phyla.kg.c)
+top20.kg.c <- top_phyla.kg.c$Genus[1:20]
+df0.kg.c <- df.kg.c %>%
+  mutate(Genus = fct_other(Genus, top20.kg.c))
+levels(df0.kg.c$Genus) <- sub("g__", "", levels(df0.kg.c$Genus))
+ggplot(df0.kg.c, aes(Sample, Abundance, fill = Genus)) +
+  geom_col()
+
+kid.i = subset_samples(kid, intervention==1)
+kid.gen.i <- tax_glom(kid.i, "Genus")
+kg1.i <- transform_sample_counts(kid.gen.i, function(x) x / sum(x))
+sample_data(kg1.i)$prepost_contact<-paste(sample_data(kg1.i)$pre_post, sample_data(kg1.i)$contactscore_ppl)
+kg2.i <- merge_samples(kg1.i, "prepost_contact")
+kg3.i <- transform_sample_counts(kg2.i, function(x) x / sum(x))
+df.kg.i <- psmelt(kg3.i)
+top_phyla.kg.i <- df.kg.i %>%
+  group_by(Sample, Genus) %>%
+  summarize(Mean = mean(Abundance)) %>%
+  arrange(-Mean)
+head(top_phyla.kg.i)
+top20.kg.i <- top_phyla.kg.i$Genus[1:20]
+df0.kg.i <- df.kg.i %>%
+  mutate(Genus = fct_other(Genus, top20.kg.i))
+levels(df0.kg.i$Genus) <- sub("g__", "", levels(df0.kg.i$Genus))
+ggplot(df0.kg.i, aes(Sample, Abundance, fill = Genus)) +
+  geom_col()
+
+
+### DESeq for Just Kids
+
+sample_data(kid)$contact.time<-paste(sample_data(kid)$pre_post, sample_data(kid)$contactscore_ppl)
+sample_data(kid)$contact.time <- relevel(as.factor(sample_data(kid)$contact.time), ref = "PRE 0")
+## ALL Kid samples, difference by pre/post and contact level
+kid.ct = phyloseq_to_deseq2(kid, ~ contact.time)
+geoMeans = apply(counts(kid.ct), 1, gm_mean)
+kid.ct = estimateSizeFactors(kid.ct, geoMeans = geoMeans)
+kid.ct = DESeq(kid.ct, test="Wald", fitType="parametric")
+kid.ct_res = results(kid.ct, contrast=list( c("Intercept", "contact.time_POST.0_vs_PRE.0",
+                                                "contact.time_POST.1_vs_PRE.0","contact.time_PRE.1_vs_PRE.0") )
+                 , cooksCutoff = FALSE)
+summary(kid.ct_res$padj) ### 
+sigtab_kid.ct = kid.ct_res[which(kid.ct_res$padj < alpha), ]
+sigtab_kid.ct = cbind(as(sigtab_kid.ct, "data.frame"), as(tax_table(kid)[rownames(sigtab_kid.ct), ], "matrix"))
+head(sigtab_kid.ct)
+dim(sigtab_kid.ct) ### 4 diff taxa in kids by pre/post & contact
+## Stratified by Control:
+kid.c = subset_samples(kid, intervention==0)
+kid.c.ct = phyloseq_to_deseq2(kid.c, ~ contact.time)
+geoMeans = apply(counts(kid.c.ct), 1, gm_mean)
+kid.c.ct = estimateSizeFactors(kid.c.ct, geoMeans = geoMeans)
+kid.c.ct = DESeq(kid.c.ct, test="Wald", fitType="parametric")
+kid.c.ct_res = results(kid.c.ct, contrast=list( c("Intercept", "contact.time_POST.0_vs_PRE.0",
+                                                "contact.time_POST.1_vs_PRE.0","contact.time_PRE.1_vs_PRE.0") )
+                 , cooksCutoff = FALSE)
+summary(kid.c.ct_res$padj) ### 
+sigtab_kid.c.ct = kid.c.ct_res[which(kid.c.ct_res$padj < alpha), ]
+sigtab_kid.c.ct = cbind(as(sigtab_kid.c.ct, "data.frame"), as(tax_table(kid.c)[rownames(sigtab_kid.c.ct), ], "matrix"))
+head(sigtab_kid.c.ct)
+dim(sigtab_kid.c.ct) ### 5 diff taxa in kid.c by pre/post & contact
+## Stratified by Intervention:
+kid.i = subset_samples(kid, intervention==1)
+kid.i.ct = phyloseq_to_deseq2(kid.i, ~ contact.time)
+geoMeans = apply(counts(kid.i.ct), 1, gm_mean)
+kid.i.ct = estimateSizeFactors(kid.i.ct, geoMeans = geoMeans)
+kid.i.ct = DESeq(kid.i.ct, test="Wald", fitType="parametric")
+kid.i.ct_res = results(kid.i.ct, contrast=list( c("Intercept", "contact.time_POST.0_vs_PRE.0",
+                                                "contact.time_POST.1_vs_PRE.0","contact.time_PRE.1_vs_PRE.0") )
+                 , cooksCutoff = FALSE)
+summary(kid.i.ct_res$padj) ### 
+sigtab_kid.i.ct = kid.i.ct_res[which(kid.i.ct_res$padj < alpha), ]
+sigtab_kid.i.ct = cbind(as(sigtab_kid.i.ct, "data.frame"), as(tax_table(kid.i)[rownames(sigtab_kid.i.ct), ], "matrix"))
+head(sigtab_kid.i.ct)
+dim(sigtab_kid.i.ct) ### 2 diff taxa in kid.i by pre/post & contact
+
+
+
+
+
+#######################################################################################################################
+
+## Final Abundance Plots ##
+
+cb_palette<-c("#fb8072", "#E69F00", "#F0E442", "#009E73",  "#56B4E9", "#0072B2", "#D55E00", "#CC79A7",
+"#7fc97f", "#e41a1c", "#fdc086", "#C0C0C0")
+##Dissertaion Plot
+ra.plot<-ggplot(df0, aes(Sample, Abundance, fill = Genus)) +
+  geom_col(position = position_stack(reverse = TRUE)) +
+  scale_fill_manual(values = cb_palette, guide=guide_legend(reverse = TRUE)) +
+  scale_x_discrete(limits=c("human Nasopharyngeal swab", "dog Nasopharyngeal swab", "dog Oral swab", "dog Skin Swab Perineal", 
+                            "dog Skin Swab Inguinal", "env Dust"), 
+                   labels=c( "Kid Nasal", "Dog Nasal", "Dog Oral", "Dog Perineal", "Dog Inguinal", "Dust")) +
+  ylab("Relative Abundance") +
+  ggtitle("A. Relative Abundance by Sample Host and Site") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size=12),
+    legend.title = element_text(face="bold"),
+    legend.position = "bottom",
+    plot.title = element_text(hjust = 0.5, size=16, face="bold")) +
+  annotate("text", x="human Nasopharyngeal swab", y=0.4, label="***", size=5) +
+  annotate("text", x="human Nasopharyngeal swab", y=0.55, label="***", size=5) +
+  annotate("text", x="dog Nasopharyngeal swab", y=0.55, label="***", size=5) +
+  annotate("text", x="dog Nasopharyngeal swab", y=0.23, label="***", size=5) +
+  annotate("text", x="dog Oral swab", y=0.45, label="***", size=5) +
+  annotate("text", x="dog Oral swab", y=0.2, label="***", size=5) +
+  annotate("text", x="dog Skin Swab Perineal", y=0.25, label="***", size=5) +
+  annotate("text", x="env Dust", y=0.15, label="***", size=5)
+ra.plot
+
+##Plot for Journal Article (just dog N site)
+df0.1<-filter(df0, Sample == "dog Nasopharyngeal swab" | Sample =="human Nasopharyngeal swab" | Sample =="env Dust")
+ggplot(df0.1, aes(Sample, Abundance, fill = Genus)) +
+  geom_col()
+ra.plot.1<-ggplot(df0.1, aes(Sample, Abundance, fill = Genus)) +
+  geom_col(position = position_stack(reverse = TRUE)) +
+  scale_fill_manual(values = cb_palette, guide=guide_legend(reverse = TRUE)) +
+  scale_x_discrete(limits=c("human Nasopharyngeal swab", "dog Nasopharyngeal swab", "env Dust"), 
+                   labels=c( "Kid Nasal", "Dog Nasal", "Dust")) +
+  ylab("Relative Abundance") +
+  ggtitle("A. Relative Abundance by Sample Host") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size=12),
+    legend.title = element_text(face="bold"),
+    legend.position = "bottom",
+    plot.title = element_text(hjust = 0.5, size=16, face="bold")) +
+  annotate("text", x="human Nasopharyngeal swab", y=0.4, label="***", size=5) +
+  annotate("text", x="human Nasopharyngeal swab", y=0.55, label="***", size=5) +
+  annotate("text", x="dog Nasopharyngeal swab", y=0.55, label="***", size=5) +
+  annotate("text", x="dog Nasopharyngeal swab", y=0.23, label="***", size=5) +
+  annotate("text", x="env Dust", y=0.15, label="***", size=5)
+ra.plot.1
+
+## Just Kids Stratified by Visit Type and Contact - two bars one pre one post
+
+### need to make each kid graph look / match and then paste them together into one graph
+## get them to match colors in earlier RA plot (all sites) -> combine into one big graph
+## then add DESeq results to each plot
+cb_palette1<-c("#E69F00", "#F0E442", "#56B4E9", "#0072B2", "#CC79A7", "#e41a1c", "#fdc086", "#954CCC", "#C0C0C0")
+kidra.plot.con<-ggplot(df0.kg.c, aes(Sample, Abundance, fill = Genus)) +
+  geom_col(position = position_stack(reverse = TRUE)) +
+  scale_fill_manual(values = cb_palette1, guide=guide_legend(reverse = TRUE)) +
+  scale_x_discrete(limits=c("PRE 1", "POST 1", "PRE 0", "POST 0"), 
+                   labels=c( "High Pre", "High Post", "Low Pre", "Low Post")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size=12), 
+        plot.title = element_text(hjust = 0.5, size=13, face="bold")) +
+  ylab("Relative Abundance") +
+  ggtitle("B. Patients in Control Visits")
+kidra.plot.con<-kidra.plot.con + annotate("text", x="POST 0", y=0.70, label="***", size=5, color="blue")
+kidra.plot.con
+
+cb_palette2<-c("#fb8072", "#E69F00", "#56B4E9", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#7fc97f", "#009E73", "#004b49",
+               "#ffc0cb", "#e41a1c", "#fdc086", "#954CCC", "#C0C0C0")
+kidra.plot.int<-ggplot(df0.kg.i, aes(Sample, Abundance, fill = Genus)) +
+  geom_col(position = position_stack(reverse = TRUE)) +
+  scale_fill_manual(values = cb_palette2, guide=guide_legend(reverse = TRUE)) +
+  scale_x_discrete(limits=c("PRE 0", "POST 0", "PRE 1", "POST 1"), 
+                   labels=c( "High Pre", "High Post", "Low Pre", "Low Post")) +
+  theme_bw() +
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size=12), 
+        plot.title = element_text(hjust = 0.5, size=13, face="bold")) +
+  ylab("Relative Abundance") +
+  ggtitle("C. Patients in Intervention Visits")
+kidra.plot.int<- kidra.plot.int + 
+  annotate("text", x="POST 0", y=0.7, label="***", size=5, color="blue") +
+  annotate("text", x="PRE 0", y=0.75, label="***", size=5, color="darkred") +
+  annotate("text", x="PRE 1", y=0.65, label="***", size=5, color="darkred") +
+  annotate("text", x="POST 1", y=0.5, label="***", size=5, color="blue")
+kidra.plot.int
+
+#### COMBINE ###
+## Diss figure
+ggdraw() +
+  draw_plot(ra.plot, x = 0, y = 0, width = 0.54, height = 1) +
+  draw_plot(kidra.plot.con, x = 0.55, y = 0.5, width = 0.45, height = 0.5) +
+  draw_plot(kidra.plot.int, x = 0.55, y = 0, width = 0.45, height = 0.5)
+## Journal figure
+ggdraw() +
+  draw_plot(ra.plot.1, x = 0, y = 0, width = 0.54, height = 1) +
+  draw_plot(kidra.plot.con, x = 0.55, y = 0.5, width = 0.45, height = 0.5) +
+  draw_plot(kidra.plot.int, x = 0.55, y = 0, width = 0.45, height = 0.5)
+
+
+
+###########################################################################################################
+
+### Staph Species Evaluation ###
+
+staph_kiddog<-subset_taxa(phy.kde, Genus=="g__Staphylococcus")
+plot_bar(staph_kiddog, "sampletype", "Abundance", fill="host_env")
+plot_bar(staph_kiddog, "Species", "Abundance", fill="host_env")   #### GREAT IMAGE!!!
+plot_bar(staph_kiddog, "Species", "Abundance", fill="sampletype", facet_grid="host_env") #not as good but shows S.pseu mainly N
+k<-plot_bar(staph_kiddog, "Species", "Abundance", fill="host_env")
+k+geom_bar(aes(color=host_env, fill=host_env), stat="identity", position="stack") #### GREAT IMAGE!!! BETTER
+d<-plot_bar(staph_kiddog, "Species", "Abundance", fill="sampletype", facet_grid="host_env")
+d+geom_bar(aes(color=sampletype, fill=sampletype), stat="identity", position="stack") ## This ones good too
+plot_bar(staph_kiddog, "Species", "Abundance", fill="host_env", facet_grid=interv~pre_post)
+staph1<-plot_bar(staph_kiddog, "Species", "Abundance", fill="host_env", facet_grid=interv~pre_post)
+staph1+geom_bar(aes(color=host_env, fill=host_env), stat="identity", position="stack")
+### shows changes in S. pseudo between control and intervention visit well
+# but do we want something that shows S. aureus changes better 
+## now subset just species we care about
+staph_kiddog.aep<-subset_taxa(staph_kiddog, Species=="s__aureus" | Species=="s__epidermidis" | Species=="s__pseudintermedius")
+staph_kiddog.aep
+staph2<-plot_bar(staph_kiddog.aep, "Species", "Abundance", fill="host_env", facet_grid=interv~pre_post)
+staph2+geom_bar(aes(color=host_env, fill=host_env), stat="identity", position="stack")
+## decent 
+staph3<-plot_bar(staph_kiddog.aep, "Species", "Abundance", fill="host_env", facet_grid=interv~contactscore_ppl)
+staph3+geom_bar(aes(color=host_env, fill=host_env), stat="identity", position="stack")
+sample_data(staph_kiddog.aep)$contact<-ifelse(sample_data(staph_kiddog.aep)$contactscore_ppl==0, "Low Contact Patients", 
+                                              ifelse(sample_data(staph_kiddog.aep)$contactscore_ppl==1, "High Contact Patients",
+                                                     ifelse(sample_data(staph_kiddog.aep)$contactscore_ppl=="d", "Dogs & Env", NA)))
+table(sample_data(staph_kiddog.aep)$contact, sample_data(staph_kiddog.aep)$host_env)
+staph3<-plot_bar(staph_kiddog.aep, "Species", "Abundance", fill="host_env", facet_grid=interv~contact)
+absol.staph.plot<-staph3+geom_bar(aes(fill=host_env), stat="identity", position="stack") +
+  ylab("Absolute Abundance") +
+  scale_x_discrete(breaks = c("s__aureus", "s__epidermidis", "s__pseudintermedius"), 
+                   labels = c("S. aureus", "S. epidermidis", "S. pseudintermedius")) +
+  scale_fill_manual(values=colors_host, 
+                    guide=guide_legend(title = NULL),
+                    limits=c("human", "dog", "env"),
+                    labels=c("Patients", "Dogs", "Environment")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    plot.title = element_text(hjust = 0.5, face = "bold", size=14), 
+    axis.text.x = element_text(size=9.5), 
+    legend.text = element_text(size=11),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=11)
+  )
+absol.staph.plot
+
+```
+
+
+## Step 3 - Alpha Diversity 
+
+These are the analyzes that went directly towards either a) the dissertation chapters or b) the journal articles. All other sub-analyzes can be found under the rough AAT_Analysis_Phyloseq_Alpha.R script. This includes other EDA figures, more KW tests + linear regression, and further alpha sub-analyses, including comparing to staph abundances and QIIME rarefied alpha results.
+
+End tables/figures: 
+* figure overall alpha div by host/site
+* figure change in alpha div in kids
+* KW test for differences
+
+
+
+```{r, echo=TRUE}
+
+###  Overall Distribution ###
+
+alpha<-estimate_richness(phy.kde, measures=c("Observed", "Shannon"))
+head(alpha)
+alpha<-rownames_to_column(alpha, var="SampleID")
+alpha.data<-merge(aat_metadata, alpha, by="SampleID", all.x=FALSE)
+head(alpha.data)
+## not a great plot - can do better w/ a data.frame using ggplot
+plot_richness(phy.kde, measures=c("Observed", "Shannon"), x="host_env", color ="sampletype")
+plot_richness(phy.kde, measures=c("Observed", "Shannon"), x="hostsite", color ="pre_post")
+plot_richness(phy.kde, measures=c("Observed", "Shannon"), x="hostsite", color ="interv")
+# instead use data.frame
+ggplot(alpha.data, aes(x=sampletype, y=Shannon, colour=pre_post)) +
+  geom_point() +
+  ggtitle("Shannon")
+ggplot(alpha.data, aes(x=sampletype, y=Observed, colour=pre_post)) +
+  geom_point() +
+  ggtitle("Observed")
+## create new variables
+alpha.data$hostsite<-paste(alpha.data$host_env, alpha.data$sampletype)
+alpha.data$interv<-ifelse(alpha.data$intervention==0, "Control", "Intervention")
+## Add Faith's Metric
+f1<-estimate_pd(phy.kde)
+head(f1)
+summary(f1$PD)
+f1 <- rownames_to_column(f1, var="SampleID")
+alpha.data<-merge(alpha.data, f1, by="SampleID") 
+alpha.data$PD<-ifelse(alpha.data$host=="human" & alpha.data$PD>55, NA, alpha.data$PD)
+# Quick EDA
+alpha.data %>% group_by(hostsite) %>% summarise(mean(Shannon), mean(Observed), mean(PD))
+alpha.data %>% group_by(hostsite, interv) %>% summarise(mean(Shannon), mean(Observed), mean(PD))
+ggplot(alpha.data, aes(x=hostsite, y=Shannon, colour=pre_post)) +
+  geom_point() + 
+  ggtitle("Shannon") +
+  facet_grid(interv~.)
+ggplot(alpha.data, aes(x=hostsite, y=Observed, colour=pre_post)) +
+  geom_point() + 
+  ggtitle("Observed") +
+  facet_grid(interv~.)
+ggplot(alpha.data, aes(x=hostsite, y=PD, color=pre_post)) +
+  geom_point() + 
+  ggtitle("Faith's PD") +
+  facet_grid(interv~.)
+total.alpha.plot<-plot_richness(phy.kde, measures=c("Observed", "Shannon"), x="hostsite", color ="pre_post", shape="interv")
+total.alpha.plot +
+  geom_boxplot() ## messy
+
+###############################################################################################
+
+## Kruskal Wallis Test for Diff in Alpha Diversity
+
+# Shannon
+kruskal.test(Shannon ~ host_env, data = alpha.data) ####
+kruskal.test(Shannon ~ sampletype, data = alpha.data) ####
+kruskal.test(Shannon ~ hostsite, data = alpha.data) ####
+kruskal.test(Shannon ~ pre_post, data = alpha.data)
+kruskal.test(Shannon ~ interv, data = alpha.data)
+kruskal.test(Shannon ~ contactscore_ppl, data = alpha.data)
+alpha.kid<-filter(alpha.data, host_env=="human")
+alpha.dog.all<-filter(alpha.data, host_env=="dog")
+alpha.dog.n<-filter(alpha.data, hostsite=="dog Nasopharyngeal swab")
+alpha.env<-filter(alpha.data, host_env=="env")
+kruskal.test(Shannon ~ pre_post, data = alpha.kid)
+kruskal.test(Shannon ~ interv, data = alpha.kid)  ## slight diff
+kruskal.test(Shannon ~ contactscore_ppl, data = alpha.kid) ## sligh diff
+kruskal.test(Shannon ~ pre_post, data = alpha.dog.all)
+kruskal.test(Shannon ~ interv, data = alpha.dog.all)
+kruskal.test(Shannon ~ pre_post, data = alpha.dog.n)
+kruskal.test(Shannon ~ interv, data = alpha.dog.n)
+kruskal.test(Shannon ~ pre_post, data = alpha.env)
+kruskal.test(Shannon ~ interv, data = alpha.env)
+
+# Observed
+kruskal.test(Observed ~ host_env, data = alpha.data) ####
+kruskal.test(Observed ~ sampletype, data = alpha.data) ####
+kruskal.test(Observed ~ hostsite, data = alpha.data) ####
+kruskal.test(Observed ~ pre_post, data = alpha.data)
+kruskal.test(Observed ~ interv, data = alpha.data)
+kruskal.test(Observed ~ contactscore_ppl, data = alpha.data)
+kruskal.test(Observed ~ pre_post, data = alpha.kid)
+kruskal.test(Observed ~ interv, data = alpha.kid)
+kruskal.test(Observed ~ contactscore_ppl, data = alpha.kid) ## slight diff
+kruskal.test(Observed ~ pre_post, data = alpha.dog.all)                 
+kruskal.test(Observed ~ interv, data = alpha.dog.all)
+kruskal.test(Observed ~ pre_post, data = alpha.dog.n)
+kruskal.test(Observed ~ interv, data = alpha.dog.n)
+kruskal.test(Observed ~ pre_post, data = alpha.env)
+kruskal.test(Observed ~ interv, data = alpha.env)
+
+# Faith
+kruskal.test(PD ~ host_env, data = alpha.data) ####
+kruskal.test(PD ~ sampletype, data = alpha.data) ####
+kruskal.test(PD ~ hostsite, data = alpha.data) ####
+kruskal.test(PD ~ pre_post, data = alpha.data)
+kruskal.test(PD ~ interv, data = alpha.data)
+kruskal.test(PD ~ contactscore_ppl, data = alpha.data)
+kruskal.test(PD ~ pre_post, data = alpha.kid)
+kruskal.test(PD ~ interv, data = alpha.kid)
+kruskal.test(PD ~ contactscore_ppl, data = alpha.kid)
+kruskal.test(PD ~ pre_post, data = alpha.dog.all)
+kruskal.test(PD ~ interv, data = alpha.dog.all)
+kruskal.test(PD ~ pre_post, data = alpha.dog.n)
+kruskal.test(PD ~ interv, data = alpha.dog.n)
+kruskal.test(PD ~ pre_post, data = alpha.env)
+kruskal.test(PD ~ interv, data = alpha.env)
+
+
+##############################################################################################
+
+## Final Alpha Diversity Plots ##
+
+#Shannon
+shannon.plot<-ggplot(alpha.data, aes(y=Shannon, x=hostsite)) +
+  geom_boxplot(width=0.35, fill="#eaeaea") +
+  geom_point(aes(colour=pre_post, shape=interv), size=3) +
+  ggtitle("A. Shannon Alpha Diversity") +
+  ylim(0, 7.5) +
+  guides(colour=guide_legend(title=NULL), shape=guide_legend(title=NULL)) +
+  annotate("text", x="human Nasopharyngeal swab", y=7, 
+           label="Kruskal-Wallis Test\nOverall Difference\nHost and Sites\np<0.001 ", size=3) +
+  scale_x_discrete(limits=c("human Nasopharyngeal swab", "dog Nasopharyngeal swab", "dog Oral swab", "dog Skin Swab Perineal", 
+                            "dog Skin Swab Inguinal", "env Dust"), 
+                   labels=c( "Kid Nasal", "Dog Nasal", "Dog Oral", "Dog Perineal", "Dog Inguinal", "Dust")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=12), 
+    legend.text = element_text(size = 11),
+    plot.title = element_text(hjust = 0.5, size=14, face="bold")) 
+## use this for future diss chapter
+
+## Observed
+obs.plot<-ggplot(alpha.data, aes(y=Observed, x=hostsite)) +
+  geom_boxplot(width=0.35) +
+  geom_point(aes(colour=pre_post, shape=interv), size=3) +
+  ggtitle("Observed OTUs Alpha Diversity") +
+  annotate("text", x="human Nasopharyngeal swab", y=875, 
+           label="Kruskal-Wallis Test \nDifferemce Host and Sites \np<0.001 ", size=2.5) +
+  scale_x_discrete(limits=c("human Nasopharyngeal swab", "dog Nasopharyngeal swab", "dog Oral swab", "dog Skin Swab Inguinal", 
+                            "dog Skin Swab Perineal", "env Dust"), 
+                   labels=c( "Kid Nasal", "Dog Nasal", "Dog Oral", "Dog Inguinal", "Dog Perineal", "Dust")) +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=12), 
+    plot.title = element_text(hjust = 0.5, size=14, face="bold")) 
+
+#Faith's PD
+faith.plot<-ggplot(alpha.data, aes(y=PD, x=hostsite)) +
+  geom_boxplot(width=0.35, fill="#eaeaea") +
+  geom_point(aes(colour=pre_post, shape=interv), size=3) +
+  ggtitle("B. Faith's Phylogenetic Alpha Diversity") +
+  ylab("Faith") +
+  guides(colour=FALSE, shape=FALSE) +
+  annotate("text", x="human Nasopharyngeal swab", y=95, 
+           label="Kruskal-Wallis Test\nOverall Difference\nHost and Sites\np<0.001 ", size=3) +
+  scale_x_discrete(limits=c("human Nasopharyngeal swab", "dog Nasopharyngeal swab", "dog Oral swab", "dog Skin Swab Perineal", 
+                            "dog Skin Swab Inguinal", "env Dust"), 
+                   labels=c( "Kid Nasal", "Dog Nasal", "Dog Oral", "Dog Perineal", "Dog Inguinal", "Dust")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=12), 
+    plot.title = element_text(hjust = 0.5, size=14, face="bold")) 
+
+
+## just Dog N for journal article 
+#Shannon
+shannon.plot2<-ggplot(alpha.data, aes(y=Shannon, x=hostsite)) +
+  geom_boxplot(width=0.35, fill="#eaeaea") +
+  geom_point(aes(colour=pre_post, shape=interv), size=3) +
+  ggtitle("B. Shannon Alpha Diversity") +
+  ylim(0, 7.5) +
+  scale_color_manual(values=colors_pre.post) +
+  guides(colour=guide_legend(title=NULL), shape=guide_legend(title=NULL)) +
+  annotate("text", x="human Nasopharyngeal swab", y=7, 
+           label="Kruskal-Wallis Test\nOverall Difference Hosts \np<0.001 ", size=3) +
+  scale_x_discrete(limits=c("human Nasopharyngeal swab", "dog Nasopharyngeal swab",  "env Dust"), 
+                   labels=c( "Kid Nasal", "Dog Nasal", "Dust")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=12), 
+    legend.text = element_text(size = 11),
+    plot.title = element_text(hjust = 0.5, size=14, face="bold")) 
+## Observed
+obs.plot2<-ggplot(alpha.data, aes(y=Observed, x=hostsite)) +
+  geom_boxplot(width=0.35, fill="#eaeaea") +
+  ylim(0, 500) +
+  geom_point(aes(colour=pre_post, shape=interv), size=3) +
+  ggtitle("A. Total Taxa") +
+  scale_color_manual(values=colors_pre.post) +
+  guides(colour=guide_legend(title=NULL), shape=guide_legend(title=NULL)) +
+  annotate("text", x="human Nasopharyngeal swab", y=400, 
+           label="Kruskal-Wallis Test \nDifference Hosts \np<0.001 ", size=3) +
+  scale_x_discrete(limits=c("human Nasopharyngeal swab", "dog Nasopharyngeal swab", "env Dust"), 
+                   labels=c( "Kid Nasal", "Dog Nasal", "Dust")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=12), 
+    legend.text = element_text(size = 11),
+    plot.title = element_text(hjust = 0.5, size=14, face="bold")) 
+# Faith's
+faith.plot2<-ggplot(alpha.data, aes(y=PD, x=hostsite)) +
+  geom_boxplot(width=0.35, fill="#eaeaea") +
+  geom_point(aes(colour=pre_post, shape=interv), size=3) +
+  ggtitle("C. Faith's Phylogenetic Alpha Diversity") +
+  ylab("Faith") +
+  guides(colour=guide_legend(title=NULL), shape=guide_legend(title=NULL)) +
+  scale_color_manual(values=colors_pre.post) +
+  annotate("text", x="human Nasopharyngeal swab", y=95, 
+           label="Kruskal-Wallis Test\nOverall Difference\nHost and Sites\np<0.001 ", size=3) +
+  scale_x_discrete(limits=c("human Nasopharyngeal swab", "dog Nasopharyngeal swab", "env Dust"), 
+                   labels=c( "Kid Nasal", "Dog Nasal", "Dust")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=12), 
+    legend.text = element_text(size = 11),
+    plot.title = element_text(hjust = 0.5, size=14, face="bold")) 
+
+
+#############################################################################################################
+
+##  Change in Alpha Levels
+
+
+## Need to Change Kid and Dog data differently since organized in different ways (for dog and env, need to account for longitudinal data)
+
+##Kids
+### generate wide dataset combining pre and post
+alpha.kid$contact<-ifelse(alpha.kid$contactscore_ppl==0, "Low", 
+                         ifelse(alpha.kid$contactscore_ppl==1, "High", NA))
+alpha.kid_pre <- filter(alpha.kid, pre_post=="PRE") %>%
+  subset(select = c(subjectid, Shannon, Observed, PD, batch))
+alpha.kid_post <- filter(alpha.kid, pre_post=="POST") %>%
+  subset(select = c(subjectid, Shannon, Observed, PD, batch))
+alpha.kid_key<-subset(alpha.kid, select = c(sampletype, subjectid, host, record_ID, 
+                                 visit_number, match_week, sample_site, interv, contact)) %>%
+  unique()
+alpha.chg.kid<-merge(alpha.kid_key, alpha.kid_pre, by="subjectid") %>%
+  merge(., alpha.kid_post, by="subjectid", suffixes = c("_pre", "_post"))
+alpha.chg.kid <- alpha.chg.kid %>%
+  mutate(shan_chg = Shannon_post - Shannon_pre, 
+         obs_chg = Observed_post - Observed_pre, 
+         fpd_chg = PD_post - PD_pre)
+head(alpha.chg.kid)
+hist(alpha.chg.kid$shan_chg)
+hist(alpha.chg.kid$obs_chg)
+hist(alpha.chg.kid$fpd_chg)
+summary(alpha.chg.kid$shan_chg)
+summary(alpha.chg.kid$obs_chg)
+summary(alpha.chg.kid$fpd_chg)
+alpha.chg.kid_summary<-alpha.chg.kid %>% 
+  group_by(interv, contact) %>%
+  summarize(
+    min(shan_chg), mean(shan_chg), median(shan_chg), max(shan_chg), 
+    min(obs_chg), mean(obs_chg), median(obs_chg), max(obs_chg),
+    min(fpd_chg), mean(fpd_chg), median(fpd_chg), max(fpd_chg))
+knitr::kable(alpha.chg.kid_summary, format="html")
+
+
+## Dogs and Env
+alpha.dogenv<-filter(alpha.data, !host_env=="human")
+alpha.dogenv_pre <- filter(alpha.dogenv, pre_post=="PRE") %>%
+  subset(., select = c(uniqueid, Shannon, Observed, PD, batch))
+alpha.dogenv_post <- filter(alpha.dogenv, pre_post=="POST")  %>%
+  subset(., select = c(uniqueid, Shannon, Observed, PD,batch))
+alpha.dogenv_key<-subset(alpha.dogenv, select = c(sampletype, subjectid, host, host_env, record_ID, 
+                             visit_number, match_week, sample_site, uniqueid, interv)) %>%
+  unique()
+alpha.chg.dogenv<-merge(alpha.dogenv_key, alpha.dogenv_pre, by="uniqueid") %>%
+  merge(., alpha.dogenv_post, by="uniqueid", suffixes = c("_pre", "_post"))
+alpha.chg.dogenv <- alpha.chg.dogenv %>%
+  mutate(shan_chg = Shannon_post - Shannon_pre, 
+         obs_chg = Observed_post - Observed_pre, 
+         fpd_chg = PD_post - PD_pre)
+head(alpha.chg.dogenv)
+hist(alpha.chg.dogenv$shan_chg)
+hist(alpha.chg.dogenv$obs_chg)
+hist(alpha.chg.dogenv$fpd_chg)
+summary(alpha.chg.dogenv$shan_chg)
+summary(alpha.chg.dogenv$obs_chg)
+summary(alpha.chg.dogenv$fpd_chg)
+alpha.chg.dogenv_summary<-alpha.chg.dogenv %>% 
+  group_by(interv, sample_site) %>%
+  summarize(
+    min(shan_chg), mean(shan_chg), median(shan_chg), max(shan_chg), 
+    min(obs_chg), mean(obs_chg), median(obs_chg), max(obs_chg),
+    min(fpd_chg), mean(fpd_chg), median(fpd_chg), max(fpd_chg))
+knitr::kable(alpha.chg.dogenv_summary, format="html")
+
+
+# KW stats by alpha change 
+kruskal.test(shan_chg ~ interv, data = alpha.chg.kid)
+kruskal.test(shan_chg ~ contact, data = alpha.chg.kid)
+kruskal.test(obs_chg ~ interv, data = alpha.chg.kid)
+kruskal.test(obs_chg ~ contact, data = alpha.chg.kid) ### sig
+kruskal.test(fpd_chg ~ interv, data = alpha.chg.kid)
+kruskal.test(fpd_chg ~ contact, data = alpha.chg.kid) ### sig
+
+kruskal.test(shan_chg ~ interv, data = alpha.chg.dogenv)
+kruskal.test(obs_chg ~ interv, data = alpha.chg.dogenv)
+kruskal.test(fpd_chg ~ interv, data = alpha.chg.dogenv)
+kruskal.test(shan_chg ~ sample_site, data = alpha.chg.dogenv)
+kruskal.test(obs_chg ~ sample_site, data = alpha.chg.dogenv) ### sig
+kruskal.test(fpd_chg ~ sample_site, data = alpha.chg.dogenv)
+alpha.chg.dog.n<-filter(alpha.chg.dogenv, sample_site=="N")
+alpha.chg.dog.mo<-filter(alpha.chg.dogenv, sample_site=="MO")
+alpha.chg.dog.i<-filter(alpha.chg.dogenv, sample_site=="I")
+alpha.chg.dog.r<-filter(alpha.chg.dogenv, sample_site=="R")
+alpha.chg.env<-filter(alpha.chg.dogenv, sample_site=="Dust")
+kruskal.test(shan_chg ~ interv, data = alpha.chg.dog.n)
+kruskal.test(obs_chg ~ interv, data = alpha.chg.dog.n)  ### slight sig
+kruskal.test(fpd_chg ~ interv, data = alpha.chg.dog.n)
+kruskal.test(shan_chg ~ interv, data = alpha.chg.dog.mo)
+kruskal.test(obs_chg ~ interv, data = alpha.chg.dog.mo)
+kruskal.test(fpd_chg ~ interv, data = alpha.chg.dog.mo)
+kruskal.test(shan_chg ~ interv, data = alpha.chg.dog.i)
+kruskal.test(obs_chg ~ interv, data = alpha.chg.dog.i)
+kruskal.test(fpd_chg ~ interv, data = alpha.chg.dog.i)
+kruskal.test(shan_chg ~ interv, data = alpha.chg.dog.r)
+kruskal.test(obs_chg ~ interv, data = alpha.chg.dog.r)
+kruskal.test(fpd_chg ~ interv, data = alpha.chg.dog.r)
+kruskal.test(shan_chg ~ interv, data = alpha.chg.env)
+kruskal.test(obs_chg ~ interv, data = alpha.chg.env)
+kruskal.test(fpd_chg ~ interv, data = alpha.chg.env) ## slight sig
+
+
+
+#############################################################################################################
+
+## Final Change Plots
+
+##Kids
+alpha.kid_prepost<-alpha.kid %>% group_by(pre_post) %>% summarize(Shannon=mean(Shannon),
+                                                                  Observed=mean(Observed), 
+                                                                  PD=mean(PD, na.rm =T))
+alpha.kid_prepost_interv<-alpha.kid %>% group_by(pre_post, interv) %>% summarize(Shannon=mean(Shannon),
+                                                                                 Observed=mean(Observed),
+                                                                                 PD=mean(PD, na.rm =T))
+alpha.kid_prepost$interv <- c("Overall Mean")
+shan.change.kid<-ggplot(alpha.kid, aes(x=pre_post, y=Shannon, colour=interv)) +
+  geom_point(size=1) +
+  geom_line(aes(group=subjectid), size=0.3) +
+  geom_point(data=alpha.kid_prepost_interv, size=2) +
+  geom_line(data=alpha.kid_prepost_interv, aes(group=interv), size=1.5) +
+  geom_point(data=alpha.kid_prepost, size=2) +
+  geom_line(data=alpha.kid_prepost, aes(group=interv), size=1.5) +
+  scale_colour_manual(values = colors_visit, guide=FALSE) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  facet_grid(.~contact) +
+  ylab("Shannon Alpha Diversity") +
+  ylim(0,6.25) +
+  ggtitle("Kid Alpha Shannon Diversity Changes") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 11), 
+    axis.title.y = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold"),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=11)
+  )
+shan.change.kid
+
+obs.change.kid<-ggplot(alpha.kid, aes(x=pre_post, y=Observed, colour=interv)) +
+  geom_point(size=1) +
+  geom_line(aes(group=subjectid), size=0.3) +
+  geom_point(data=alpha.kid_prepost_interv, size=2) +
+  geom_line(data=alpha.kid_prepost_interv, aes(group=interv), size=1.5) +
+  geom_point(data=alpha.kid_prepost, size=2) +
+  geom_line(data=alpha.kid_prepost, aes(group=interv), size=1.5) +
+  scale_colour_manual(values = colors_visit, guide=FALSE) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  facet_grid(.~contact) +
+  ylab("Observed OTUs") +
+  ylim(0,250) +
+  ggtitle("Kid Alpha Observed OTU Changes") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 11), 
+    axis.title.y = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold"),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=11)
+  )
+obs.change.kid
+
+fpd.change.kid<-ggplot(alpha.kid, aes(x=pre_post, y=PD, colour=interv)) +
+  geom_point(size=1) +
+  geom_line(aes(group=subjectid), size=0.3) +
+  geom_point(data=alpha.kid_prepost_interv, size=2) +
+  geom_line(data=alpha.kid_prepost_interv, aes(group=interv), size=1.5) +
+  geom_point(data=alpha.kid_prepost, size=2) +
+  geom_line(data=alpha.kid_prepost, aes(group=interv), size=1.5) +
+  scale_colour_manual(values = colors_visit, guide=FALSE) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  facet_grid(.~contact) +
+  ylab("Faith's Alpha Diversity") +
+  ylim(0,55) +
+  ggtitle("Kid Alpha Faith's Phylogenetic Diversity Changes") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 11), 
+    axis.title.y = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold"),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=11)
+  )
+fpd.change.kid
+
+##Dogs ENV
+alpha.dogenv_prepost<-alpha.dogenv %>% group_by(pre_post, sample_site) %>% summarize(Shannon=mean(Shannon),
+                                                                  Observed=mean(Observed), 
+                                                                  PD=mean(PD, na.rm =T))
+alpha.dogenv_prepost_interv<-alpha.dogenv %>% group_by(pre_post, sample_site, interv) %>% summarize(Shannon=mean(Shannon),
+                                                                                 Observed=mean(Observed),
+                                                                                 PD=mean(PD, na.rm =T))
+alpha.dogenv_prepost$interv <- c("Overall Mean")
+
+shan.change.dogenv<-ggplot(alpha.dogenv, aes(x=pre_post, y=Shannon, colour=interv)) +
+  geom_point(size=1) +
+  geom_line(aes(group=uniqueid), size=0.3) +
+  geom_point(data=alpha.dogenv_prepost_interv, size=2) +
+  geom_line(data=alpha.dogenv_prepost_interv, aes(group=interv), size=1.5) +
+  geom_point(data=alpha.dogenv_prepost, size=2) +
+  geom_line(data=alpha.dogenv_prepost, aes(group=interv), size=1.5) +
+  scale_colour_manual(values = colors_visit, guide=guide_legend(title = NULL)) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  facet_grid(.~sample_site) +
+  ylab("Shannon Alpha Diversity") +
+  ylim(0,6.25) +
+  ggtitle("Dog and Dust Shannon Alpha Diversity Changes") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 11), 
+    axis.title.y = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold"),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=11)
+  )
+shan.change.dogenv
+
+obs.change.dogenv<-ggplot(alpha.dogenv, aes(x=pre_post, y=Observed, colour=interv)) +
+  geom_point(size=1) +
+  geom_line(aes(group=uniqueid), size=0.3) +
+  geom_point(data=alpha.dogenv_prepost_interv, size=2) +
+  geom_line(data=alpha.dogenv_prepost_interv, aes(group=interv), size=1.5) +
+  geom_point(data=alpha.dogenv_prepost, size=2) +
+  geom_line(data=alpha.dogenv_prepost, aes(group=interv), size=1.5) +
+  scale_colour_manual(values = colors_visit, guide=FALSE) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  facet_grid(.~sample_site) +
+  ylab("Observed OTUs") +
+  ylim(0,750) +
+  ggtitle("Dog and Dust Observed OTU Changes") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 11), 
+    axis.title.y = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold"),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=11)
+  )
+obs.change.dogenv
+
+fpd.change.dogenv<-ggplot(alpha.dogenv, aes(x=pre_post, y=PD, colour=interv)) +
+  geom_point(size=1) +
+  geom_line(aes(group=uniqueid), size=0.3) +
+  geom_point(data=alpha.dogenv_prepost_interv, size=2) +
+  geom_line(data=alpha.dogenv_prepost_interv, aes(group=interv), size=1.5) +
+  geom_point(data=alpha.dogenv_prepost, size=2) +
+  geom_line(data=alpha.dogenv_prepost, aes(group=interv), size=1.5) +
+  scale_colour_manual(values = colors_visit, guide=FALSE) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  facet_grid(.~sample_site) +
+  ylab("Faith Alpha Diversity") +
+  ylim(0,80) +
+  ggtitle("Dog and Dust Faith's Phylogenetic Alpha Diversity Changes") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 11), 
+    axis.title.y = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold"),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=11)
+  )
+fpd.change.dogenv
+
+#Change plot just dog N, colored host, faceted interv
+alpha.dogenv_short<-filter(alpha.dogenv, sample_site=="N" | sample_site=="Dust")
+alpha.dogenv_prepost2<-alpha.dogenv_short %>% group_by(pre_post, host_env, interv) %>% summarize(Shannon=mean(Shannon),
+                                                                  Observed=mean(Observed), 
+                                                                  PD=mean(PD, na.rm =T))
+shan.change.dogenv2<-ggplot(alpha.dogenv_short, aes(x=pre_post, y=Shannon, colour=host_env)) +
+  geom_point(size=1) +
+  geom_line(aes(group=uniqueid), size=0.3) +
+  geom_point(data=alpha.dogenv_prepost2, size=2) +
+  geom_line(data=alpha.dogenv_prepost2, aes(group=host_env), size=1.5) +
+  scale_colour_manual(values = colors_host_de, guide=guide_legend(title = NULL), 
+                      labels=c("Dog", "Environment")) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  facet_grid(.~interv) +
+  ylab("Shannon Alpha Diversity") +
+  ylim(0,6.25) +
+  ggtitle("E. Shannon Diversity") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 8), 
+    axis.title.y = element_text(size = 9),
+    plot.title = element_text(hjust = 0.5, size=11, face="bold"),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=10)
+  )
+shan.change.dogenv2
+
+obs.change.dogenv2<-ggplot(alpha.dogenv_short, aes(x=pre_post, y=Observed, colour=host_env)) +
+  geom_point(size=1) +
+  geom_line(aes(group=uniqueid), size=0.3) +
+  geom_point(data=alpha.dogenv_prepost2, size=2) +
+  geom_line(data=alpha.dogenv_prepost2, aes(group=host_env), size=1.5) +
+  scale_colour_manual(values = colors_host_de, guide=FALSE) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  facet_grid(.~interv) +
+  ylab("Total Taxa") +
+  ylim(0,450) +
+  ggtitle("D. Total Taxa") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 8), 
+    axis.title.y = element_text(size = 9),
+    plot.title = element_text(hjust = 0.5, size=11, face="bold"),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=10)
+  )
+obs.change.dogenv2
+
+fpd.change.dogenv2<-ggplot(alpha.dogenv_short, aes(x=pre_post, y=PD, colour=host_env)) +
+  geom_point(size=1) +
+  geom_line(aes(group=uniqueid), size=0.3) +
+  geom_point(data=alpha.dogenv_prepost2, size=2) +
+  geom_line(data=alpha.dogenv_prepost2, aes(group=host_env), size=1.5) +
+  scale_colour_manual(values = colors_host_de, guide=FALSE) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  facet_grid(.~interv) +
+  ylab("Faith's Alpha Diversity") +
+  ylim(0,55) +
+  ggtitle("F. Faith's Phylogenetic Diversity") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 8), 
+    axis.title.y = element_text(size = 9),
+    plot.title = element_text(hjust = 0.5, size=11, face="bold"),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=10)
+  )
+fpd.change.dogenv2
+
+
+##For Diss - Kids divide by cont & inter and group by contact level
+alpha.kid_prepost1<-alpha.kid %>% group_by(pre_post, interv) %>% summarize(Shannon=mean(Shannon),
+                                                                  Observed=mean(Observed), 
+                                                                  PD=mean(PD, na.rm =T))
+alpha.kid_prepost_contact<-alpha.kid %>% group_by(pre_post, contact, interv) %>%
+  summarize(Shannon=mean(Shannon),Observed=mean(Observed), PD=mean(PD, na.rm =T))
+alpha.kid_prepost1$contact <- c("Overall Mean")
+
+shan.change.kid.contact<-ggplot(alpha.kid, aes(x=pre_post, y=Shannon, colour=contact)) +
+  geom_point(size=1) +
+  geom_line(aes(group=subjectid), size=0.3) +
+  geom_point(data=alpha.kid_prepost_contact, size=2) +
+  geom_line(data=alpha.kid_prepost_contact, aes(group=contact), size=1.5) +
+  geom_point(data=alpha.kid_prepost1, size=2) +
+  geom_line(data=alpha.kid_prepost1, aes(group=contact), size=1.5) +
+  scale_colour_manual(values = colors_contact, guide=guide_legend(title = NULL), 
+                      labels=c("High Contact", "Low Contact", "Overall Mean")) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  facet_grid(.~interv) +
+  ylab("Shannon Alpha Diversity") +
+  ylim(0, 5.5) +
+  ggtitle("B. Shannon Diversity") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 8), 
+    axis.title.y = element_text(size = 9),
+    plot.title = element_text(hjust = 0.5, size=11, face="bold"),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=10)
+  )
+shan.change.kid.contact
+
+obs.change.kid.contact<-ggplot(alpha.kid, aes(x=pre_post, y=Observed, colour=contact)) +
+  geom_point(size=1) +
+  geom_line(aes(group=subjectid), size=0.3) +
+  geom_point(data=alpha.kid_prepost_contact, size=2) +
+  geom_line(data=alpha.kid_prepost_contact, aes(group=contact), size=1.5) +
+  geom_point(data=alpha.kid_prepost1, size=2) +
+  geom_line(data=alpha.kid_prepost1, aes(group=contact), size=1.5) +
+  scale_colour_manual(values = colors_contact, guide=FALSE) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  facet_grid(.~interv) +
+  ylab("Total Taxa") +
+  ylim(0,250) +
+  ggtitle("A. Total Taxa") +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 8), 
+    axis.title.y = element_text(size = 9),
+    plot.title = element_text(hjust = 0.5, size=11, face="bold"),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=10)
+  )
+obs.change.kid.contact
+
+fpd.change.kid.contact<-ggplot(alpha.kid, aes(x=pre_post, y=PD, colour=contact)) +
+  geom_point(size=1) +
+  geom_line(aes(group=subjectid), size=0.3) +
+  geom_point(data=alpha.kid_prepost_contact, size=2) +
+  geom_line(data=alpha.kid_prepost_contact, aes(group=contact), size=1.5) +
+  geom_point(data=alpha.kid_prepost1, size=2) +
+  geom_line(data=alpha.kid_prepost1, aes(group=contact), size=1.5) +
+  scale_colour_manual(values = colors_contact, guide=FALSE) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  facet_grid(.~interv) +
+  ylab("Faith's Alpha Diversity") +
+  ylim(0,55) +
+  ggtitle("C. Faith's Phylogenetic Diversity")+
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 8), 
+    axis.title.y = element_text(size = 9),
+    plot.title = element_text(hjust = 0.5, size=11, face="bold"),
+    strip.background = element_rect(fill="light blue"),
+    strip.text = element_text(size=10)
+  )
+fpd.change.kid.contact
+
+
+################################################################################################
+
+## Combined Plots
+
+## Diss - just Shannon and Faith's, combined overall alpha level all host/sites, and kids divided cont and interv visits, colored by high low contact
+
+## For paper - want overall Obs, Shannon + FPD, just kid&dog N and env
+## want to keep as sim to original diss, so keep just kids - like colored by contact
+alpha.kid.plots<-ggarrange(obs.change.kid.contact, shan.change.kid.contact, fpd.change.kid.contact,
+          common.legend = TRUE, legend = "bottom", nrow = 1)
+alpha.dog.plots<-ggarrange(obs.change.dogenv2, shan.change.dogenv2, fpd.change.dogenv2,
+          common.legend = TRUE, legend = "bottom", nrow = 1)
+
+alpha.pt.text1<-paste("         ", "In", "Patients:", sep=" ")
+alpha.pt.text2<-paste("         ", "In", "Dogs and Environment:", sep=" ")
+
+alpha.pt.text1 <- ggparagraph(text = alpha.pt.text1, size = 13, face = "bold", color = "black", lineheight = 0.7)
+alpha.pt.text2 <- ggparagraph(text = alpha.pt.text2, size = 13, face = "bold", color = "black", lineheight = 0.7)
+
+##### FINAL PLOT !!!! ####
+ggarrange(alpha.pt.text1, alpha.kid.plots, alpha.pt.text2, alpha.dog.plots, 
+          nrow=4, ncol=1, heights = c(0.1, 1, 0.1, 1))
+
+
+```
+
+
+## Step 4 - Beta Diversity  
+
+These are the analyzes that went directly towards either a) the dissertation chapters or b) the journal articles. All other sub-analyzes can be found under the rough AAT_Analysis_Phyloseq_Beta.R script. This includes other EDA figures, and further beta sub-analyses.
+Beta Differences will be calculated and analyzed next section, including PERMANOVA tests. 
+
+End tables/figures: 
+* figure PCoA by host/site
+
+
+```{r, echo=TRUE}
+
+#1) Overall distribution PCoA with clustering test
+
+## PCOA EDA
+ord1<-ordinate(phy.kde, method = "MDS", distance = "unifrac")
+plot_ordination(phy.kde, ord1, type = "samples", color="host_env", shape="pre_post")
+plot_ordination(phy.kde, ord1, type = "samples", color="match_week", shape="host_env")
+plot_ordination(phy.kde, ord1, type = "samples", color="host_env", shape="sampletype")
+plot_ordination(phy.kde, ord1, type = "samples", color="hostsite", shape="pre_post")
+##check batch effect
+plot_ordination(phy.kde, ord1, type = "samples", color="batch")
+plot_ordination(phy.kde, ord1, type = "samples", color="sample_plate")
+## faceted
+p2<-plot_ordination(phy.kde, ord1, type = "samples", color="host_env", shape="pre_post")
+p2+ facet_grid(.~interv)
+p2<-plot_ordination(phy.kde, ord1, type = "samples", color="host_env", shape="sampletype")
+p2+ facet_grid(.~pre_post)
+p2+ facet_grid(.~interv)
+p2<-plot_ordination(phy.kde, ord1, type = "samples", color="hostsite", shape="pre_post")
+p2+ facet_grid(.~interv)
+
+ord2<-ordinate(phy.kde, method = "MDS", distance = "wunifrac")
+plot_ordination(phy.kde, ord2, type = "samples", color="host_env", shape="pre_post")
+plot_ordination(phy.kde, ord2, type = "samples", color="match_week", shape="host_env")
+plot_ordination(phy.kde, ord2, type = "samples", color="host_env", shape="sampletype")
+plot_ordination(phy.kde, ord2, type = "samples", color="hostsite", shape="pre_post")
+##check batch effect
+plot_ordination(phy.kde, ord2, type = "samples", color="batch")
+plot_ordination(phy.kde, ord2, type = "samples", color="sample_plate")
+## faceted
+p<-plot_ordination(phy.kde, ord2, type = "samples", color="host_env", shape="pre_post")
+p+ facet_grid(.~interv)
+p<-plot_ordination(phy.kde, ord2, type = "samples", color="host_env", shape="sampletype")
+p+ facet_grid(.~pre_post)
+p+ facet_grid(.~interv)
+p<-plot_ordination(phy.kde, ord2, type = "samples", color="hostsite", shape="pre_post")
+p+ facet_grid(.~interv)
+
+#############################
+### clean graphs
+## Diss (all samples)
+## UUF
+uuf1<-plot_ordination(phy.kde, ord1, type = "samples", color="hostsite", shape="pre_post")
+uuf2<-uuf1 + facet_grid(.~interv) +
+  geom_point(size=2.5) +
+  ggtitle("Unweighted UniFrac") +
+  scale_color_discrete(limits=c("human Nasopharyngeal swab", "dog Nasopharyngeal swab", 
+                                "dog Oral swab", "dog Skin Swab Inguinal", "dog Skin Swab Perineal", "NA Dust"),
+    labels=c("Patient Nasal", "Dog Nasal", "Dog Oral", "Dog Inguinal", "Dog Perineal", "Environment\nDust")) +
+  guides(shape=guide_legend(title=NULL), color=guide_legend(title=NULL)) +
+  theme_bw() +
+  theme(
+    strip.background = element_rect(fill="lightblue"), 
+    strip.text = element_text(size=12), 
+    legend.text = element_text(size=12), 
+    plot.title = element_text(size=14, face="bold", hjust = 0.5)
+  )
+uuf2
+##WUF
+wuf1<-plot_ordination(phy.kde, ord2, type = "samples", color="hostsite", shape="pre_post")
+wuf2<-wuf1 + facet_grid(.~interv) +
+  geom_point(size=2.5) +
+  ggtitle("Weighted UniFrac") +
+  scale_color_discrete(limits=c("human Nasopharyngeal swab", "dog Nasopharyngeal swab", 
+                                "dog Oral swab", "dog Skin Swab Inguinal", "dog Skin Swab Perineal", "NA Dust"),
+    labels=c("Patient Nasal", "Dog Nasal", "Dog Oral", "Dog Inguinal", "Dog Perineal", "Environment\nDust")) +
+  guides(shape=guide_legend(title=NULL), color=guide_legend(title=NULL)) +
+  theme_bw() +
+  theme(
+    strip.background = element_rect(fill="lightblue"), 
+    strip.text = element_text(size=12), 
+    legend.text = element_text(size=12), 
+    plot.title = element_text(size=14, face="bold", hjust = 0.5)
+  ) 
+wuf2
+ggarrange(uuf2, wuf2, nrow=2, ncol=1,
+          common.legend = TRUE, legend = "bottom")
+
+
+## Paper (just Dog N)
+phy.kde_short<-subset_samples(phy.kde, hostsite == "dog Nasopharyngeal swab" | hostsite =="human Nasopharyngeal swab" | hostsite=="NA Dust")
+
+## UUF
+uuf2_short<-uuf1 + facet_grid(.~interv) +
+  geom_point(size=2.5) +
+  ggtitle("Unweighted UniFrac") +
+  scale_color_manual(values = colors_host,
+                       limits=c("human Nasopharyngeal swab", "dog Nasopharyngeal swab", 
+                                "NA Dust"),
+                       labels=c("Patient Nasal", "Dog Nasal", "Environment Dust")) +
+  guides(shape=guide_legend(title=NULL), color=guide_legend(title=NULL)) +
+  theme_bw() +
+  theme(
+    strip.background = element_rect(fill="lightblue"), 
+    strip.text = element_text(size=12), 
+    legend.text = element_text(size=12), 
+    plot.title = element_text(size=14, face="bold", hjust = 0.5)
+  )
+uuf2_short
+##WUF
+wuf2_short<-wuf1 + facet_grid(.~interv) +
+  geom_point(size=2.5) +
+  ggtitle("Weighted UniFrac") +
+  scale_color_manual(values = colors_host,
+                     limits=c("human Nasopharyngeal swab", "dog Nasopharyngeal swab", 
+                               "NA Dust"),
+                     labels=c("Patient Nasal", "Dog Nasal", "Environment Dust")) +
+  guides(shape=guide_legend(title=NULL), color=guide_legend(title=NULL)) +
+  theme_bw() +
+  theme(
+    strip.background = element_rect(fill="lightblue"), 
+    strip.text = element_text(size=12), 
+    legend.text = element_text(size=12), 
+    plot.title = element_text(size=14, face="bold", hjust = 0.5)
+  ) 
+wuf2_short
+ggarrange(uuf2_short, wuf2_short, nrow=2, ncol=1,
+          common.legend = TRUE, legend = "bottom")
+
+
+####################################################################################################################### 
+### Clustering
+# From the clusGap documentation: The clusGap function from the cluster package calculates a goodness of clustering measure, 
+# called the “gap” statistic. For each number of clusters k, it compares (W(k)) with E^*[(W(k))] where the latter is defined 
+# via bootstrapping, i.e. simulating from a reference distribution.
+pam1 <- function(x,k) list(cluster = pam(x,k, cluster.only=TRUE))
+x = phyloseq:::scores.pcoa(ord1, display="sites")
+cluster_uuf<- clusGap(x[, 1:2], FUN=pam1, K.max = 20, B = 50)
+cluster_uuf
+# higher gap statistic better number of clusters
+## looks like ~16 clusters
+## doesn't tell WHAT clusters they are just that there are clusters
+x = phyloseq:::scores.pcoa(ord2, display="sites")
+cluster_wuf<- clusGap(x[, 1:2], FUN=pam1, K.max = 20, B = 50)
+cluster_wuf
+## either 1 big cluster or 20 smaller clusters?
+## UNSURE IF WORTHWHILE 
+```
+
+
+## Step 4 - Beta Diversity Distance 
+
+To calculate beta distance, can get it with phyloseq (phyloseq::distance, then melt into matrix and filter) but don't trust as much as QIIME. In QIIME, can get in oen command (versus issues with multiple code lines in phyloseq) and results are more expected based on PCOA distance (on both QIIME and phyloseq plots).
+
+So steps are to go back to Unix/QIIME and get beta diversity metrics there. Unlike alpha diversity, will not be affected by rarefaction. Jus using kid and dog nasal samples for this analysis, since they are more comparable (versus other dog sites and env)
+
+These are the analyzes that went directly towards either a) the dissertation chapters or b) the journal articles. All other sub-analyzes can be found under the rough AAT_Analysis_Phyloseq_Beta.R and AAT_Analysis_BetaAdonis_5.22.R scripts. This includes other EDA figures, and further sub-analyses
+
+End tables/figures: 
+* figure beta distances by host/site - seperate contact & visit type
+* figure beta distances by host/site - faceted contact & visit type
+* adonis tests
+
+
+```{bash, eval=FALSE, echo=TRUE}
+
+## Steps 1 in QIIME (back in bash)
+## Prep
+source activate qiime2-2019.7
+qiime --help
+cd /Users/kathryndalton/Dropbox/AAT_microbiome/16S
+## QIIME files at end Part 1: aat-table.qza, aat-rep-seqs.qza, aat-gg-taxonomy.qza, rooted-tree-aat.qza, unrooted-tree-aat.qza
+
+## Step 1 - get beta metrics
+qiime feature-table filter-samples \
+--i-table aat-featuretable-final.qza \
+--m-metadata-file AAT_workbook.txt \
+--p-where "[sampletype]='Nasopharyngeal swab'" \
+--o-filtered-table new-aat-analysis-5.10/aat-table-nasal.qza
+qiime diversity beta-phylogenetic \
+--i-table new-aat-analysis-5.10/aat-table-nasal.qza \
+--i-phylogeny rooted-tree-aat.qza \
+--p-metric 'unweighted_unifrac' \
+--o-distance-matrix new-aat-analysis-5.10/unweighted_unifrac_kiddog.qza
+qiime diversity beta-phylogenetic \
+--i-table new-aat-analysis-5.10/aat-table-nose1.qza \
+--i-phylogeny rooted-tree-aat.qza \
+--p-metric 'weighted_unifrac' \
+--o-distance-matrix new-aat-analysis-5.10/weighted_unifrac_kiddog.qza
+
+#Step 2 - get beta significance files
+qiime diversity beta-group-significance \
+--i-distance-matrix new-aat-analysis-5.10/unweighted_unifrac_kiddog.qza \
+--m-metadata-file AAT_workbook.txt \
+--m-metadata-column host \
+--o-visualization new-aat-analysis-5.10/unweighted_unifrac_kiddog.qzv \
+--p-pairwise
+qiime diversity beta-group-significance \
+--i-distance-matrix new-aat-analysis-5.10/weighted_unifrac_kiddog.qza \
+--m-metadata-file AAT_workbook.txt \
+--m-metadata-column host \
+--o-visualization new-aat-analysis-5.10/weighted_unifrac_kiddog.qzv \
+--p-pairwise
+
+## Step 3 - extract files
+mkdir beta_significance
+qiime tools extract \
+  --input-path new-aat-analysis-5.10/unweighted_unifrac_kiddog.qzv \
+  --output-path beta_significance
+qiime tools extract \
+  --input-path new-aat-analysis-5.10/weighted_unifrac_kiddog.qzv \
+  --output-path beta_significance
+## copy where final extracted fiel went (will show up in confirm message)
+## Should be beta_significance/9c016d13-060e-4cd2-bb69-a6aa9539a1f2 (unweighted) and beta_significance/617045d2-c098-457b-8866-8bb0aed949fd (weighted)  --- will say in unix console
+## confirm alphanumeric filepath
+## move the file we want (raw data with all distances) into main directory
+mv beta_significance/9c016d13-060e-4cd2-bb69-a6aa9539a1f2/data/raw_data.tsv unweighted_unifrac_kiddog.tsv
+mv beta_significance/617045d2-c098-457b-8866-8bb0aed949fd/data/raw_data.tsv weighted_unifrac_kiddog.tsv
+
+```
+
+
+### Back in R console
+
+Creating Figures and Running Adonis PERMANOVA test
+adonis = PERMANOVA for beta group significance. Can use formula to test multivariate analysis, including interaction between covariables. Used to determine whether groups of samples are significantly different from one another using the ADONIS permutation-based test and test if there is a statistically signficant difference between our sample types. One way to do this is with the betadisper and adonis functions from the vegan package. adonis can tell us if there is a statistical difference between groups, but it has an assumption that must be met that we first need to check with betadisper, and that is that there is a sufficient level of homogeneity of dispersion within groups. If there is not, then adonis can be unreliable.
+
+
+``` {r, echo=TRUE} 
+
+## Upload distance files
+uuf_kiddog<-read_tsv("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/unweighted_unifrac_kiddog.tsv")
+wuf_kiddog<-read_tsv("/Users/kathryndalton/Dropbox/AAT_microbiome/16S/weighted_unifrac_kiddog.tsv")
+
+######### UNWEIGHTED #############
+
+## setting up dataframes and summary of distance results ### 
+uuf_kiddog$X1<-NULL
+merge1 = merge(uuf_kiddog, aat_metadata, by.x = "SubjectID1", by.y="SampleID") #4639 x 21
+uuf.distance = merge(merge1, aat_metadata, by.x = "SubjectID2", by.y="SampleID", suffix=c(".1", ".2")) #4639 x 37
+uuf.distance$prepostmatch<-ifelse(uuf.distance$pre_post.1=="PRE"&uuf.distance$pre_post.2=="PRE", "PRE",
+                                  ifelse(uuf.distance$pre_post.1=="POST"&uuf.distance$pre_post.2=="POST", "POST", "mismatch"))
+table(uuf.distance$prepostmatch)
+uuf.distance<-filter(uuf.distance, pre_post.1=="PRE"&pre_post.2=="PRE" | pre_post.1=="POST"&pre_post.2=="POST")
+table(uuf.distance$prepostmatch)
+uuf.distance$visitmatch<-ifelse(uuf.distance$match_week.1==uuf.distance$match_week.2, "Same Visit", "Different Visit")
+table(uuf.distance$visitmatch)
+table(uuf.distance$visitmatch, uuf.distance$prepostmatch)
+uuf.distance$visitprepostmatch<-as.factor(paste(uuf.distance$visitmatch, uuf.distance$prepostmatch))
+table(uuf.distance$visitprepostmatch)
+## for visit type - don't really care about mismatch, just want it to stratify, will remove for graphing
+uuf.distance$visittype<-ifelse(uuf.distance$intervention.1==0&uuf.distance$intervention.2==0, "Control",
+                               ifelse(uuf.distance$intervention.1==1&uuf.distance$intervention.2==1, "Intervention", "mismatch"))
+table(uuf.distance$visittype, uuf.distance$visitprepostmatch)
+## for contact score - for sake of ease, "High" means either one or both kids have high dog contact in kid-kid difference
+## -> ran analysis seperating out and found no diiference pre vs post in  both-high or one-high-one-low (both sig)
+uuf.kid.full<-filter(uuf.distance, host.1=="human"&host.2=="human") ## just kid-kid comparisons
+uuf.kid.full$contact<-ifelse(uuf.kid.full$contactscore_ppl.1==0 & uuf.kid.full$contactscore_ppl.2==0, "Low", "High")
+table(uuf.kid.full$contact)
+table(uuf.kid.full$contact, uuf.kid.full$visitprepostmatch)
+uuf.kiddog.full <- filter(uuf.distance, host.1=="human"&host.2=="dog" | host.1=="dog"&host.2=="human") # just kid-dog comparisons
+uuf.kiddog.full$contact<-ifelse(uuf.kiddog.full$contactscore_ppl.1==0 | uuf.kiddog.full$contactscore_ppl.2==0, "Low",
+                                ifelse(uuf.kiddog.full$contactscore_ppl.1==1 | uuf.kiddog.full$contactscore_ppl.2==1, "High", "mismatch"))
+table(uuf.kiddog.full$contact)
+table(uuf.kiddog.full$contact, uuf.kiddog.full$visitprepostmatch)
+
+uuf.kid.full %>% group_by(prepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+uuf.kid.full %>% group_by(visitmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+uuf.kid.full %>% group_by(visitprepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+uuf.kid.full %>% group_by(visittype, contact) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+uuf.kid.full %>% filter(visittype=="Control") %>% group_by(contact, prepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+uuf.kid.full %>% filter(visittype=="Intervention") %>% group_by(contact, prepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+
+uuf.kiddog.full %>% group_by(prepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+uuf.kiddog.full %>% group_by(visitmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+uuf.kiddog.full %>% group_by(visitprepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+uuf.kiddog.full %>% group_by(visittype, contact) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+uuf.kiddog.full %>% filter(visittype=="Control") %>% group_by(contact, prepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+uuf.kiddog.full %>% filter(visittype=="Intervention") %>% group_by(contact, prepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+
+
+####################################################################################################
+######## WEIGHTED #############
+
+## setting up dataframes and summary of distance results ### 
+wuf_kiddog$X1<-NULL
+merge1 = merge(wuf_kiddog, aat_metadata, by.x = "SubjectID1", by.y="SampleID") #4639 x 21
+wuf.distance = merge(merge1, aat_metadata, by.x = "SubjectID2", by.y="SampleID", suffix=c(".1", ".2")) #4639 x 37
+wuf.distance$prepostmatch<-ifelse(wuf.distance$pre_post.1=="PRE"&wuf.distance$pre_post.2=="PRE", "PRE",
+                                  ifelse(wuf.distance$pre_post.1=="POST"&wuf.distance$pre_post.2=="POST", "POST", "mismatch"))
+table(wuf.distance$prepostmatch)
+wuf.distance<-filter(wuf.distance, pre_post.1=="PRE"&pre_post.2=="PRE" | pre_post.1=="POST"&pre_post.2=="POST")
+table(wuf.distance$prepostmatch)
+wuf.distance$visitmatch<-ifelse(wuf.distance$match_week.1==wuf.distance$match_week.2, "Same Visit", "Different Visit")
+table(wuf.distance$visitmatch)
+table(wuf.distance$visitmatch, wuf.distance$prepostmatch)
+wuf.distance$visitprepostmatch<-as.factor(paste(wuf.distance$visitmatch, wuf.distance$prepostmatch))
+table(wuf.distance$visitprepostmatch)
+wuf.distance$visittype<-ifelse(wuf.distance$intervention.1==0&wuf.distance$intervention.2==0, "Control",
+                               ifelse(wuf.distance$intervention.1==1&wuf.distance$intervention.2==1, "Intervention", "mismatch"))
+table(wuf.distance$visittype, wuf.distance$visitprepostmatch)
+
+
+wuf.kid.full<-filter(wuf.distance, host.1=="human"&host.2=="human") ## just kid-kid comparisons
+wuf.kid.full$contact<-ifelse(wuf.kid.full$contactscore_ppl.1==0 & wuf.kid.full$contactscore_ppl.2==0, "Low", "High")
+table(wuf.kid.full$contact)
+table(wuf.kid.full$contact, wuf.kid.full$visitprepostmatch)
+wuf.kiddog.full <- filter(wuf.distance, host.1=="human"&host.2=="dog" | host.1=="dog"&host.2=="human") # just kid-dog comparisons
+wuf.kiddog.full$contact<-ifelse(wuf.kiddog.full$contactscore_ppl.1==0 | wuf.kiddog.full$contactscore_ppl.2==0, "Low",
+                                ifelse(wuf.kiddog.full$contactscore_ppl.1==1 | wuf.kiddog.full$contactscore_ppl.2==1, "High", "mismatch"))
+table(wuf.kiddog.full$contact, wuf.kiddog.full$visitprepostmatch)
+
+wuf.kid.full %>% group_by(prepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+wuf.kid.full %>% group_by(visitmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+wuf.kid.full %>% group_by(visitprepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+wuf.kid.full %>% group_by(visittype, contact) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+wuf.kid.full %>% filter(visittype=="Control") %>% group_by(contact, prepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+wuf.kid.full %>% filter(visittype=="Intervention") %>% group_by(contact, prepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+
+wuf.kiddog.full %>% group_by(prepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+wuf.kiddog.full %>% group_by(visitmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+wuf.kiddog.full %>% group_by(visitprepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+wuf.kiddog.full %>% group_by(visittype, contact) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+wuf.kiddog.full %>% filter(visittype=="Control") %>% group_by(contact, prepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+wuf.kiddog.full %>% filter(visittype=="Intervention") %>% group_by(contact, prepostmatch) %>% 
+  summarize(dist_mean=mean(Distance), dist_median=median(Distance), min=min(Distance), max=max(Distance), iqr=IQR(Distance))
+
+
+
+############################################################################################################
+
+#### Adonis ###
+
+### UUF #####
+#  Get one-way Adonis results each analysis - kid-kid
+adonis(Distance ~ prepostmatch, data = uuf.kid.full, perm=9999) 
+adonis(Distance ~ visitmatch, data = uuf.kid.full, perm=9999)  
+adonis(Distance ~ contact, data = uuf.kid.full, perm=9999) 
+adonis(Distance ~ visitprepostmatch, data = uuf.kid.full, perm=9999) 
+adonis(Distance ~ visittype, data = uuf.kid.full, perm=9999)  
+#stratified - 
+## by visittype
+uuf.kid.c<-filter(uuf.kid.full, visittype=="Control") 
+adonis(Distance ~ prepostmatch, data = uuf.kid.c, perm=9999) 
+adonis(Distance ~ visitmatch, data = uuf.kid.c, perm=9999) 
+adonis(Distance ~ visitprepostmatch, data = uuf.kid.c, perm=9999) 
+adonis(Distance ~ contact, data = uuf.kid.c, perm=9999) 
+uuf.kid.i<-filter(uuf.kid.full, visittype=="Intervention") 
+adonis(Distance ~ prepostmatch, data = uuf.kid.i, perm=9999) 
+adonis(Distance ~ visitmatch, data = uuf.kid.i, perm=9999)
+adonis(Distance ~ visitprepostmatch, data = uuf.kid.i, perm=9999) 
+adonis(Distance ~ contact, data = uuf.kid.i, perm=9999) 
+## don't care about mismatched visits eg. kid Cont - kid interv
+## by contact
+uuf.kid.h<-filter(uuf.kid.full, contact=="High") 
+adonis(Distance ~ prepostmatch, data = uuf.kid.h, perm=9999) 
+adonis(Distance ~ visitmatch, data = uuf.kid.h, perm=9999)  
+adonis(Distance ~ visitprepostmatch, data = uuf.kid.h, perm=9999) 
+adonis(Distance ~ visittype, data = uuf.kid.h, perm=9999) 
+uuf.kid.l<-filter(uuf.kid.full, contact=="Low") 
+adonis(Distance ~ prepostmatch, data = uuf.kid.l, perm=9999) 
+adonis(Distance ~ visitmatch, data = uuf.kid.l, perm=9999)  
+adonis(Distance ~ visitprepostmatch, data = uuf.kid.l, perm=9999) 
+adonis(Distance ~ visittype, data = uuf.kid.l, perm=9999) 
+
+####  Get one-way adonis results each analysis - kid-dog
+adonis(Distance ~ prepostmatch, data = uuf.kiddog.full, perm=9999) 
+adonis(Distance ~ visitmatch, data = uuf.kiddog.full, perm=9999)  
+adonis(Distance ~ contact, data = uuf.kiddog.full, perm=9999) 
+adonis(Distance ~ visitprepostmatch, data = uuf.kiddog.full, perm=9999) 
+adonis(Distance ~ visittype, data = uuf.kiddog.full, perm=9999)  
+#stratified - 
+## by visittype
+uuf.kiddog.c<-filter(uuf.kiddog.full, visittype=="Control") 
+adonis(Distance ~ prepostmatch, data = uuf.kiddog.c, perm=9999) 
+adonis(Distance ~ visitmatch, data = uuf.kiddog.c, perm=9999) 
+adonis(Distance ~ visitprepostmatch, data = uuf.kiddog.c, perm=9999) 
+adonis(Distance ~ contact, data = uuf.kiddog.c, perm=9999) 
+uuf.kiddog.i<-filter(uuf.kiddog.full, visittype=="Intervention") 
+adonis(Distance ~ prepostmatch, data = uuf.kiddog.i, perm=9999) 
+adonis(Distance ~ visitmatch, data = uuf.kiddog.i, perm=9999)
+adonis(Distance ~ visitprepostmatch, data = uuf.kiddog.i, perm=9999) 
+adonis(Distance ~ contact, data = uuf.kiddog.i, perm=9999) 
+## by contact
+uuf.kiddog.h<-filter(uuf.kiddog.full, contact=="High") 
+adonis(Distance ~ prepostmatch, data = uuf.kiddog.h, perm=9999) 
+adonis(Distance ~ visitmatch, data = uuf.kiddog.h, perm=9999)  
+adonis(Distance ~ visitprepostmatch, data = uuf.kiddog.h, perm=9999) 
+adonis(Distance ~ visittype, data = uuf.kiddog.h, perm=9999) 
+uuf.kiddog.l<-filter(uuf.kiddog.full, contact=="Low") 
+adonis(Distance ~ prepostmatch, data = uuf.kiddog.l, perm=9999) 
+adonis(Distance ~ visitmatch, data = uuf.kiddog.l, perm=9999)  
+adonis(Distance ~ visitprepostmatch, data = uuf.kiddog.l, perm=9999) 
+adonis(Distance ~ visittype, data = uuf.kiddog.l, perm=9999) 
+
+### multivariate adonis kid-kid
+adonis(Distance ~ prepostmatch + visitmatch, data=uuf.kid.full, perm=9999) 
+adonis(Distance ~ prepostmatch * visitmatch, data=uuf.kid.full, perm=9999)
+adonis(Distance ~ prepostmatch + visitmatch + contact + visittype, data=uuf.kid.full, perm=9999)
+### multivariate adonis kid-dog
+adonis(Distance ~ prepostmatch + visitmatch, data=uuf.kiddog.full, perm=9999)
+adonis(Distance ~ prepostmatch * visitmatch, data=uuf.kiddog.full, perm=9999)
+adonis(Distance ~ prepostmatch + visitmatch + contact + visittype, data=uuf.kiddog.full, perm=9999)
+
+## Double Stratified Adonis 
+uuf.kid.ch<-filter(uuf.kid.c, contact=="High") 
+uuf.kid.cl<-filter(uuf.kid.c, contact=="Low") 
+adonis(Distance ~ prepostmatch, data = uuf.kid.ch, perm=9999) #p<0.0001
+adonis(Distance ~ prepostmatch, data = uuf.kid.cl, perm=9999) #p=0.6924
+uuf.kid.ih<-filter(uuf.kid.i, contact=="High") 
+uuf.kid.il<-filter(uuf.kid.i, contact=="Low") 
+adonis(Distance ~ prepostmatch, data = uuf.kid.ih, perm=9999) #p=0.0003
+adonis(Distance ~ prepostmatch, data = uuf.kid.il, perm=9999) #p=0.1513
+uuf.kiddog.ch<-filter(uuf.kiddog.c, contact=="High") 
+uuf.kiddog.cl<-filter(uuf.kiddog.c, contact=="Low") 
+adonis(Distance ~ prepostmatch, data = uuf.kiddog.ch, perm=9999) #p<0.0001
+adonis(Distance ~ prepostmatch, data = uuf.kiddog.cl, perm=9999) #p=0.0861
+uuf.kiddog.ih<-filter(uuf.kiddog.i, contact=="High") 
+uuf.kiddog.il<-filter(uuf.kiddog.i, contact=="Low") 
+adonis(Distance ~ prepostmatch, data = uuf.kiddog.ih, perm=9999) #p<0.0001
+adonis(Distance ~ prepostmatch, data = uuf.kiddog.il, perm=9999) #p=0.0371
+
+
+#### WUF ####
+
+####  Get one-way adonis results each analysis - kid-kid
+adonis(Distance ~ prepostmatch, data = wuf.kid.full, perm=9999) 
+adonis(Distance ~ visitmatch, data = wuf.kid.full, perm=9999)  
+adonis(Distance ~ contact, data = wuf.kid.full, perm=9999) 
+adonis(Distance ~ visitprepostmatch, data = wuf.kid.full, perm=9999) 
+adonis(Distance ~ visittype, data = wuf.kid.full, perm=9999)  
+#stratified - 
+## by visittype
+wuf.kid.c<-filter(wuf.kid.full, visittype=="Control") 
+adonis(Distance ~ prepostmatch, data = wuf.kid.c, perm=9999) 
+adonis(Distance ~ visitmatch, data = wuf.kid.c, perm=9999) 
+adonis(Distance ~ visitprepostmatch, data = wuf.kid.c, perm=9999) 
+adonis(Distance ~ contact, data = wuf.kid.c, perm=9999) 
+wuf.kid.i<-filter(wuf.kid.full, visittype=="Intervention") 
+adonis(Distance ~ prepostmatch, data = wuf.kid.i, perm=9999) 
+adonis(Distance ~ visitmatch, data = wuf.kid.i, perm=9999)
+adonis(Distance ~ visitprepostmatch, data = wuf.kid.i, perm=9999) 
+adonis(Distance ~ contact, data = wuf.kid.i, perm=9999) 
+## by contact
+wuf.kid.h<-filter(wuf.kid.full, contact=="High") 
+adonis(Distance ~ prepostmatch, data = wuf.kid.h, perm=9999) 
+adonis(Distance ~ visitmatch, data = wuf.kid.h, perm=9999)  
+adonis(Distance ~ visitprepostmatch, data = wuf.kid.h, perm=9999) 
+adonis(Distance ~ visittype, data = wuf.kid.h, perm=9999) 
+wuf.kid.l<-filter(wuf.kid.full, contact=="Low") 
+adonis(Distance ~ prepostmatch, data = wuf.kid.l, perm=9999) 
+adonis(Distance ~ visitmatch, data = wuf.kid.l, perm=9999)  
+adonis(Distance ~ visitprepostmatch, data = wuf.kid.l, perm=9999) 
+adonis(Distance ~ visittype, data = wuf.kid.l, perm=9999) 
+
+####  Get one-way adonis results each analysis - kid-dog
+adonis(Distance ~ prepostmatch, data = wuf.kiddog.full, perm=9999) 
+adonis(Distance ~ visitmatch, data = wuf.kiddog.full, perm=9999)  
+adonis(Distance ~ contact, data = wuf.kiddog.full, perm=9999) 
+adonis(Distance ~ visitprepostmatch, data = wuf.kiddog.full, perm=9999) 
+adonis(Distance ~ visittype, data = wuf.kiddog.full, perm=9999)  
+#stratified - 
+## by visittype
+wuf.kiddog.c<-filter(wuf.kiddog.full, visittype=="Control") 
+adonis(Distance ~ prepostmatch, data = wuf.kiddog.c, perm=9999) 
+adonis(Distance ~ visitmatch, data = wuf.kiddog.c, perm=9999) 
+adonis(Distance ~ visitprepostmatch, data = wuf.kiddog.c, perm=9999) 
+adonis(Distance ~ contact, data = wuf.kiddog.c, perm=9999) 
+wuf.kiddog.i<-filter(wuf.kiddog.full, visittype=="Intervention") 
+adonis(Distance ~ prepostmatch, data = wuf.kiddog.i, perm=9999) 
+adonis(Distance ~ visitmatch, data = wuf.kiddog.i, perm=9999)
+adonis(Distance ~ visitprepostmatch, data = wuf.kiddog.i, perm=9999) 
+adonis(Distance ~ contact, data = wuf.kiddog.i, perm=9999) 
+## by contact
+wuf.kiddog.h<-filter(wuf.kiddog.full, contact=="High") 
+adonis(Distance ~ prepostmatch, data = wuf.kiddog.h, perm=9999) 
+adonis(Distance ~ visitmatch, data = wuf.kiddog.h, perm=9999)  
+adonis(Distance ~ visitprepostmatch, data = wuf.kiddog.h, perm=9999) 
+adonis(Distance ~ visittype, data = wuf.kiddog.h, perm=9999) 
+wuf.kiddog.l<-filter(wuf.kiddog.full, contact=="Low") 
+adonis(Distance ~ prepostmatch, data = wuf.kiddog.l, perm=9999) 
+adonis(Distance ~ visitmatch, data = wuf.kiddog.l, perm=9999)  
+adonis(Distance ~ visitprepostmatch, data = wuf.kiddog.l, perm=9999) 
+adonis(Distance ~ visittype, data = wuf.kiddog.l, perm=9999) 
+
+### multivariate adonis kid-kid
+adonis(Distance ~ prepostmatch + visitmatch, data=wuf.kid.full, perm=9999) 
+adonis(Distance ~ prepostmatch * visitmatch, data=wuf.kid.full, perm=9999) 
+adonis(Distance ~ prepostmatch + visitmatch + contact + visittype, data=wuf.kid.full, perm=9999)
+### multivariate adonis kid-dog
+adonis(Distance ~ prepostmatch + visitmatch, data=wuf.kiddog.full, perm=9999) 
+adonis(Distance ~ prepostmatch * visitmatch, data=wuf.kiddog.full, perm=9999)
+adonis(Distance ~ prepostmatch + visitmatch + contact + visittype, data=wuf.kiddog.full, perm=9999)
+
+## Double Stratified Adonis 
+wuf.kid.ch<-filter(wuf.kid.c, contact=="High") 
+wuf.kid.cl<-filter(wuf.kid.c, contact=="Low") 
+adonis(Distance ~ prepostmatch, data = wuf.kid.ch, perm=9999)  #p=0.0005
+adonis(Distance ~ prepostmatch, data = wuf.kid.cl, perm=9999)  #p=0.0128
+wuf.kid.ih<-filter(wuf.kid.i, contact=="High") 
+wuf.kid.il<-filter(wuf.kid.i, contact=="Low") 
+adonis(Distance ~ prepostmatch, data = wuf.kid.ih, perm=9999) #p=0.3408
+adonis(Distance ~ prepostmatch, data = wuf.kid.il, perm=9999) #p=0.4471
+wuf.kiddog.ch<-filter(wuf.kiddog.c, contact=="High") 
+wuf.kiddog.cl<-filter(wuf.kiddog.c, contact=="Low") 
+adonis(Distance ~ prepostmatch, data = wuf.kiddog.ch, perm=9999) #p=0.0919
+adonis(Distance ~ prepostmatch, data = wuf.kiddog.cl, perm=9999) #p=0.1717
+wuf.kiddog.ih<-filter(wuf.kiddog.i, contact=="High") 
+wuf.kiddog.il<-filter(wuf.kiddog.i, contact=="Low") 
+adonis(Distance ~ prepostmatch, data = wuf.kiddog.ih, perm=9999) #p<0.0001
+adonis(Distance ~ prepostmatch, data = wuf.kiddog.il, perm=9999) #p=0.0005
+
+
+#########################################################################################################
+
+### Get Change Variable Post - Pre Distance
+# need to match on both subject1 and subject2 (in case of kiddog uniqueid1 & 2)
+
+
+uuf.kid.pre<-filter(uuf.kid.full, prepostmatch=="PRE") #703x44
+uuf.kid.post<-filter(uuf.kid.full, prepostmatch=="POST") #820x44
+mergepp<- merge(uuf.kid.pre, uuf.kid.post, by = "subjectid.1", suffixes=c(".pre", ".post")) #18912x87
+uuf.kid.chg<- filter(mergepp, subjectid.2.pre==subjectid.2.post) #703x87
+uuf.kid.chg$distchange<-uuf.kid.chg$Distance.post-uuf.kid.chg$Distance.pre
+uuf.kid.chg1<-filter(uuf.kid.chg, !visittype.pre=="mismatch")
+summary(uuf.kid.chg$distchange)
+ggplot(uuf.kid.chg1, aes(y=distchange, x=contact.pre, fill=contact.pre)) +
+  geom_boxplot(aes(x=contact.pre), width=0.95) +
+  geom_dotplot(binaxis = "y", binwidth = 0.015, stackdir = "center") +
+  facet_grid(.~visittype.pre) +
+  ggtitle("UUF Kid-Kid")
+uuf.kiddog.pre<-filter(uuf.kiddog.full, prepostmatch=="PRE") #703x44
+uuf.kiddog.post<-filter(uuf.kiddog.full, prepostmatch=="POST") #820x44
+mergepp2<- merge(uuf.kiddog.pre, uuf.kiddog.post, by = "uniqueid.1", suffixes=c(".pre", ".post")) #18912x87
+uuf.kiddog.chg<- filter(mergepp2, uniqueid.2.pre==uniqueid.2.post) #703x87
+uuf.kiddog.chg$distchange<-uuf.kiddog.chg$Distance.post-uuf.kiddog.chg$Distance.pre
+uuf.kiddog.chg1<-filter(uuf.kiddog.chg, !visittype.pre=="mismatch")
+summary(uuf.kiddog.chg$distchange)
+ggplot(uuf.kiddog.chg1, aes(y=distchange, x=contact.pre, fill=contact.pre)) +
+  geom_boxplot(width=0.95) +
+  geom_dotplot(binaxis = "y", binwidth = 0.015, stackdir = "center") +
+  facet_grid(.~visittype.pre)+
+  ggtitle("UUF Kid-Dog")
+
+wuf.kid.pre<-filter(wuf.kid.full, prepostmatch=="PRE") #703x44
+wuf.kid.post<-filter(wuf.kid.full, prepostmatch=="POST") #820x44
+mergepp<- merge(wuf.kid.pre, wuf.kid.post, by = "subjectid.1", suffixes=c(".pre", ".post")) #18912x87
+wuf.kid.chg<- filter(mergepp, subjectid.2.pre==subjectid.2.post) #703x87
+wuf.kid.chg$distchange<-wuf.kid.chg$Distance.post-wuf.kid.chg$Distance.pre
+wuf.kid.chg1<-filter(wuf.kid.chg, !visittype.pre=="mismatch")
+summary(wuf.kid.chg$distchange)
+ggplot(wuf.kid.chg1, aes(y=distchange, x=contact.pre, fill=contact.pre)) +
+  geom_boxplot(aes(x=contact.pre), width=0.95) +
+  facet_grid(.~visittype.pre)+
+  geom_dotplot(binaxis = "y", binwidth = 0.03, stackdir = "center") +
+  ggtitle("WUF Kid-Kid")
+wuf.kiddog.pre<-filter(wuf.kiddog.full, prepostmatch=="PRE") #703x44
+wuf.kiddog.post<-filter(wuf.kiddog.full, prepostmatch=="POST") #820x44
+mergepp2<- merge(wuf.kiddog.pre, wuf.kiddog.post, by = "uniqueid.1", suffixes=c(".pre", ".post")) #18912x87
+wuf.kiddog.chg<- filter(mergepp2, uniqueid.2.pre==uniqueid.2.post) #703x87
+wuf.kiddog.chg$distchange<-wuf.kiddog.chg$Distance.post-wuf.kiddog.chg$Distance.pre
+wuf.kiddog.chg1<-filter(wuf.kiddog.chg, !visittype.pre=="mismatch")
+summary(wuf.kiddog.chg$distchange)
+ggplot(wuf.kiddog.chg1, aes(y=distchange, x=contact.pre, fill=contact.pre)) +
+  geom_boxplot(width=0.95) +
+  geom_dotplot(binaxis = "y", binwidth = 0.03, stackdir = "center") +
+  facet_grid(.~visittype.pre)+
+  ggtitle("WUF Kid-Dog")
+
+
+
+#####################################################################################################################
+### PLOTTING BETA DISTANCE POST-PRE CHANGE
+
+## usign these as main graph, then all samples as supplement
+
+mytheme<-theme_bw() +
+  theme(panel.background = element_rect(colour = "white"), 
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(size=12), 
+        axis.text.y = element_text(size=10),
+        axis.title.y = element_text(size=12), 
+        strip.background = element_rect(fill="light blue"), 
+        strip.text = element_text(size=12, face="bold"),
+        plot.title = element_text(size=14, face="bold", hjust=0.5)
+        )
+
+uuf.kk<-ggplot(uuf.kid.chg1, aes(y=distchange, x=contact.pre, fill=contact.pre)) +
+  geom_boxplot(aes(x=contact.pre), width=0.95) +
+  geom_dotplot(binaxis = "y", binwidth = 0.02, stackdir = "center") +
+  facet_grid(.~visittype.pre) +
+  scale_fill_manual(values = colors_contact) +
+  geom_hline(yintercept = 0, size=0.8, color="black", linetype="dashed") +
+  guides(fill=FALSE) +
+  ggtitle("A. Unweighted UniFrac Kid-Kid Distance") +
+  scale_y_continuous(name= "Beta Distance", 
+                     limits=c(-0.5, 0.55), 
+                     breaks=c(-0.45, -0.25, 0, 0.25, 0.5), 
+                     labels=c("More\nSimilar", "", "", "", "Less\nSimilar")) +
+  mytheme
+
+wuf.kid.chg12<-filter(wuf.kid.chg1, distchange>=-0.5)
+wuf.kk<-ggplot(wuf.kid.chg12, aes(y=distchange, x=contact.pre, fill=contact.pre)) +
+  geom_boxplot(aes(x=contact.pre), width=0.95) +
+  facet_grid(.~visittype.pre) +
+  geom_dotplot(binaxis = "y", binwidth = 0.02, stackdir = "center") +
+  guides(fill=FALSE) +
+  scale_fill_manual(values = colors_contact) +
+  geom_hline(yintercept = 0, size=0.8, color="black", linetype="dashed") +
+  ggtitle("B. Weighted UniFrac Kid-Kid Distance") + 
+  scale_y_continuous(name= "Beta Distance", 
+                     limits=c(-0.5, 0.55), 
+                     breaks=c(-0.45, -0.25, 0, 0.25, 0.5), 
+                     labels=c("More\nSimilar", "", "", "", "Less\nSimilar")) +
+  mytheme 
+
+uuf.kd<-ggplot(uuf.kiddog.chg1, aes(y=distchange, x=contact.pre, fill=contact.pre)) +
+  geom_boxplot(width=0.95) +
+  geom_dotplot(binaxis = "y", binwidth = 0.025, stackdir = "center") +
+  facet_grid(.~visittype.pre)+
+  guides(fill=FALSE) +
+  labs(y="Beta Distance") +
+  scale_fill_manual(values = colors_contact) +
+  geom_hline(yintercept = 0, size=0.8, color="black", linetype="dashed") +
+  ggtitle("C. Unweighted UniFrac Kid-Dog Distance") +
+  scale_y_continuous(name= "Beta Distance", 
+                     limits=c(-0.6, 0.6), 
+                     breaks=c(-0.5, -0.25, 0, 0.25, 0.5), 
+                     labels=c("More\nSimilar", "", "", "", "Less\nSimilar")) +
+  mytheme
+
+wuf.kd<-ggplot(wuf.kiddog.chg1, aes(y=distchange, x=contact.pre, fill=contact.pre)) +
+  geom_boxplot(width=0.95) +
+  geom_dotplot(binaxis = "y", binwidth = 0.025, stackdir = "center") +
+  facet_grid(.~visittype.pre)+
+  guides(fill=FALSE) +
+  labs(y="Beta Distance") +
+  scale_fill_manual(values = colors_contact) +
+  geom_hline(yintercept = 0, size=0.8, color="black", linetype="dashed") +
+  ggtitle("D. Weighted UniFrac Kid-Dog Distance") +
+  scale_y_continuous(name= "Beta Distance", 
+                     limits=c(-0.6, 0.6), 
+                     breaks=c(-0.5, -0.25, 0, 0.25, 0.5), 
+                     labels=c("More\nSimilar", "", "", "", "Less\nSimilar")) +
+  mytheme
+
+
+### add p values
+ukk_ch <- data.frame(contact.pre = "High", distchange=0.51, 
+                         lab = "p=0.0001",
+                     visittype.pre = factor("Control", 
+                                               levels = c("Control","Intervention")))
+ukk_cl <- data.frame(contact.pre = "Low", distchange=0.51, 
+                       lab = "p=0.6924",
+                     visittype.pre = factor("Control", 
+                                             levels = c("Control","Intervention")))
+ukk_ih <- data.frame(contact.pre = "High", distchange=0.51, 
+                       lab = "p=0.0003",
+                     visittype.pre = factor("Intervention", 
+                                             levels = c("Control","Intervention")))
+ukk_il <- data.frame(contact.pre = "Low", distchange=0.51, 
+                       lab = "p=0.1513",
+                     visittype.pre = factor("Intervention", 
+                                             levels = c("Control","Intervention")))
+uuf.kk<-uuf.kk + 
+  geom_text(data = ukk_ch, label="p=0.0001", size=3, fontface="bold", color="darkred") +
+  geom_text(data = ukk_cl, label="p=0.6924", size=3, color="black") +
+  geom_text(data = ukk_ih, label="p=0.0003", size=3, fontface="bold", color="darkred") +
+  geom_text(data = ukk_il, label="p=0.1513", size=3, color="black")
+wkk_ch <- data.frame(contact.pre = "High", distchange=0.51, 
+                     lab = "p=0.0005",
+                     visittype.pre = factor("Control", 
+                                            levels = c("Control","Intervention")))
+wkk_cl <- data.frame(contact.pre = "Low", distchange=0.51, 
+                     lab = "p=0.0128",
+                     visittype.pre = factor("Control", 
+                                            levels = c("Control","Intervention")))
+wkk_ih <- data.frame(contact.pre = "High", distchange=0.51, 
+                     lab = "p=0.3408",
+                     visittype.pre = factor("Intervention", 
+                                            levels = c("Control","Intervention")))
+wkk_il <- data.frame(contact.pre = "Low", distchange=0.51, 
+                     lab = "p=0.3408",
+                     visittype.pre = factor("Intervention", 
+                                            levels = c("Control","Intervention")))
+wuf.kk<-wuf.kk + 
+  geom_text(data = wkk_ch, label="p=0.0005", size=3, fontface="bold", color="darkred") +
+  geom_text(data = wkk_cl, label="p=0.0128", size=3, color="black") +
+  geom_text(data = wkk_ih, label="p=0.3408", size=3, color="black") +
+  geom_text(data = wkk_il, label="p=0.3408", size=3, color="black")
+ukd_ch <- data.frame(contact.pre = "High", distchange=0.51, 
+                     lab = "p=0.0001",
+                     visittype.pre = factor("Control", 
+                                            levels = c("Control","Intervention")))
+ukd_cl <- data.frame(contact.pre = "Low", distchange=0.51, 
+                     lab = "p=0.0861",
+                     visittype.pre = factor("Control", 
+                                            levels = c("Control","Intervention")))
+ukd_ih <- data.frame(contact.pre = "High", distchange=0.51, 
+                     lab = "p=0.0001",
+                     visittype.pre = factor("Intervention", 
+                                            levels = c("Control","Intervention")))
+ukd_il <- data.frame(contact.pre = "Low", distchange=0.51, 
+                     lab = "p=0.0371",
+                     visittype.pre = factor("Intervention", 
+                                            levels = c("Control","Intervention")))
+uuf.kd<-uuf.kd + 
+  geom_text(data = ukd_ch, label="p=0.0001", size=3, fontface="bold", color="darkred") +
+  geom_text(data = ukd_cl, label="p=0.0861", size=3, color="black") +
+  geom_text(data = ukd_ih, label="p=0.0001", size=3, fontface="bold", color="darkred") +
+  geom_text(data = ukd_il, label="p=0.0371", size=3, color="black")
+wkd_ch <- data.frame(contact.pre = "High", distchange=0.60, 
+                     lab = "p=0.0919",
+                     visittype.pre = factor("Control", 
+                                            levels = c("Control","Intervention")))
+wkd_cl <- data.frame(contact.pre = "Low", distchange=0.60, 
+                     lab = "p=0.1717",
+                     visittype.pre = factor("Control", 
+                                            levels = c("Control","Intervention")))
+wkd_ih <- data.frame(contact.pre = "High", distchange=0.51, 
+                     lab = "p=0.0001",
+                     visittype.pre = factor("Intervention", 
+                                            levels = c("Control","Intervention")))
+wkd_il <- data.frame(contact.pre = "Low", distchange=0.51, 
+                     lab = "p=0.0005",
+                     visittype.pre = factor("Intervention", 
+                                            levels = c("Control","Intervention")))
+wuf.kd<-wuf.kd + 
+  geom_text(data = wkd_ch, label="p=0.0919", size=3, color="black") +
+  geom_text(data = wkd_cl, label="p=0.1717", size=3, color="black") +
+  geom_text(data = wkd_ih, label="p=0.0001", size=3, fontface="bold", color="darkred") +
+  geom_text(data = wkd_il, label="p=0.0005", size=3, fontface="bold", color="darkred")
+
+
+
+
+ggarrange(uuf.kk, wuf.kk, uuf.kd, wuf.kd, ncol=2, nrow=2, legend="none")
+
+
+
+
+#################################################################################################################
+
+###### PLOTTING BETA DISTANCES - All ##########
+
+## distance files: wuf.kid.full, wuf.kiddog.full, wuf.kid.full, wuf.kiddog.full
+## goal is to plot distance by pre post and make 3 separate graphs (all samples, stratified by visittype, stratified by contact)
+## then combine for one big graph
+## do for wuf + WUF kid-kid, then wuf + WUF kid-dog
+
+
+##### Unweighted ######
+#### KID - KID Distance ####
+## all samples
+colors.all<-c("lightblue")
+kkall<-ggplot(uuf.kid.full, aes(y=Distance, x=prepostmatch, fill=study.1)) +
+  geom_boxplot(width=0.95) +
+  geom_dotplot(binaxis = "y", binwidth = 0.0075, stackdir = "center") +
+  ylab("Unweighted Unifrac Distance") +
+  scale_fill_manual(values = colors.all) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  scale_y_continuous(breaks=c(0.35,  0.6, 0.9), 
+                   labels=c("More\nSimilar", "", "Less\nSimilar")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=11), 
+    axis.text.y = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold")
+  )
+kkall
+## by visit type - remove mistmatch visits since don't care about them
+uuf.kid.vmatch<-filter(uuf.kid.full, visittype=="Control" | visittype=="Intervention")
+colors.visit<-c("#1f78b4", "#fc8d62")
+kkvisit<-ggplot(uuf.kid.vmatch, aes(y=Distance, x=prepostmatch, fill=visittype)) +
+  geom_boxplot(width=1) +
+  geom_dotplot(binaxis = "y", binwidth = 0.01, stackdir = "center", position = position_dodge(0.8)) +
+  ylab("Unweighted Unifrac Distance") +
+  scale_fill_manual(values = colors.visit) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  scale_y_continuous(breaks=c(0.35,  0.6, 0.9), 
+                     labels=c("More\nSimilar", "", "Less\nSimilar")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=11), 
+    axis.text.y = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold")
+  )
+# by contact
+colors.contact<-c("#7fc97f", "#bc80bd")
+kkcontact<-ggplot(uuf.kid.full, aes(y=Distance, x=prepostmatch, fill=contact)) +
+  geom_boxplot(width=1) +
+  geom_dotplot(binaxis = "y", binwidth = 0.0075, stackdir = "center", position = position_dodge(0.8))+
+  ylab("Unweighted Unifrac Distance") +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  scale_fill_manual(values = colors.contact) +
+  scale_y_continuous(breaks=c(0.35,  0.6, 0.9), 
+                     labels=c("More\nSimilar", "", "Less\nSimilar")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=11), 
+    axis.text.y = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold")
+  )
+
+
+
+### KID - DOG Distance ###
+## all samples
+colors.all<-c("lightblue")
+kdall<-ggplot(uuf.kiddog.full, aes(y=Distance, x=prepostmatch, fill=study.1)) +
+  geom_boxplot(width=0.95) +
+  geom_dotplot(binaxis = "y", binwidth = 0.0075, stackdir = "center") +
+  ylab("Unweighted Unifrac Distance") +
+  labs(fills="All Samples") +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  guides(fill=guide_legend(title = NULL)) +
+  scale_fill_manual(values = colors.all, labels=c("All Samples")) +
+  scale_y_continuous(breaks=c(0.35,  0.6, 0.9), 
+                     labels=c("More\nSimilar", "", "Less\nSimilar")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=11), 
+    axis.text.y = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold"), 
+    legend.background = element_rect(colour="black"),
+    legend.position = "top", 
+    legend.title = element_text(size=11)
+  )
+## by visit type - remove mistmatch visits since don't care about them
+uuf.kiddog.vmatch<-filter(uuf.kiddog.full, visittype=="Control" | visittype=="Intervention")
+kdvisit<-ggplot(uuf.kiddog.vmatch, aes(y=Distance, x=prepostmatch, fill=visittype)) +
+  geom_boxplot(width=1) +
+  geom_dotplot(binaxis = "y", binwidth = 0.01, stackdir = "center", position = position_dodge(0.8)) +
+  ylab("Unweighted Unifrac Distance") +
+  labs(fill="By Visit Type") +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  scale_fill_manual(values = colors.visit) +
+  scale_y_continuous(breaks=c(0.35,  0.6, 0.9), 
+                     labels=c("More\nSimilar", "", "Less\nSimilar")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=11), 
+    axis.text.y = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold"), 
+    legend.background = element_rect(colour="black"),
+    legend.position = "top", 
+    legend.title = element_text(size=11)
+  )
+# by contact
+kdcontact<-ggplot(uuf.kiddog.full, aes(y=Distance, x=prepostmatch, fill=contact)) +
+  geom_boxplot(width=1) +
+  geom_dotplot(binaxis = "y", binwidth = 0.0075, stackdir = "center", position = position_dodge(0.8))+
+  ylab("Unweighted Unifrac Distance") +
+  labs(fill="By Contact Level") +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  scale_fill_manual(values = colors.contact) +
+  scale_y_continuous(breaks=c(0.35,  0.6, 0.9), 
+                     labels=c("More\nSimilar", "", "Less\nSimilar")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=11), 
+    axis.text.y = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold"),
+    legend.background = element_rect(colour="black"),
+    legend.position = "top", 
+    legend.title = element_text(size=11)
+  )
+
+## Arrange plots together ###
+kid.kid.label<-paste("Kid - Kid", "Distance", sep=" ")
+kid.dog.label<-paste("Kid - Dog", "Distance", sep=" ")
+
+kid.kid.plots<-ggarrange(kkall, kkvisit+rremove("y.text")+rremove("y.title"), kkcontact+rremove("y.text")+rremove("y.title"), ncol=3, legend="none")
+kid.dog.plots<-ggarrange(kdall, kdvisit+rremove("y.text")+rremove("y.title"), kdcontact+rremove("y.text")+rremove("y.title"), ncol=3, legend="top")
+
+ggdraw() +
+  draw_text(kid.kid.label, x = 0.5, y = 0.98, size=16, fontface="bold") +
+  draw_plot(kid.kid.plots, x = 0, y = 0.53, width = 1, height = 0.43) +
+  draw_text(kid.dog.label, x = 0.5, y = 0.52, size=16, fontface="bold") +
+  draw_plot(kid.dog.plots, x = 0, y = 0, width = 1, height = 0.5)
+
+### Alterative without text (better for presentations)
+ggdraw() +
+  draw_plot(kid.kid.plots, x = 0, y = 0.53, width = 1, height = 0.47) +
+  draw_plot(kid.dog.plots, x = 0, y = 0, width = 1, height = 0.52)
+
+
+#################################################################################################
+
+## Distance for Weighted
+
+
+#### KID - KID Distance ####
+## all samples
+
+kkall.w<-ggplot(wuf.kid.full, aes(y=Distance, x=prepostmatch, fill=study.1)) +
+  geom_boxplot(width=0.95) +
+  geom_dotplot(binaxis = "y", binwidth = 0.016, stackdir = "center") +
+  ylab("Weighted UniFrac Distance") +
+  scale_fill_manual(values = colors.all) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  scale_y_continuous(limits = c(0, 1.5), 
+                     breaks=c(0.2,  0.8, 1.4), 
+                     labels=c("More\nSimilar", "", "Less\nSimilar")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=11), 
+    axis.text.y = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold")
+  )
+kkall.w
+## by visit type - remove mistmatch visits since don't care about them
+wuf.kid.vmatch<-filter(wuf.kid.full, visittype=="Control" | visittype=="Intervention")
+
+kkvisit.w<-ggplot(wuf.kid.vmatch, aes(y=Distance, x=prepostmatch, fill=visittype)) +
+  geom_boxplot(width=1) +
+  geom_dotplot(binaxis = "y", binwidth = 0.022, stackdir = "center", position = position_dodge(0.8)) +
+  ylab("Weighted Unifrac Distance") +
+  scale_fill_manual(values = colors.visit) +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  scale_y_continuous(limits = c(0, 1.5), 
+                     breaks=c(0.2,  0.8, 1.4),  
+                     labels=c("More\nSimilar", "", "Less\nSimilar")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=11), 
+    axis.text.y = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold")
+  )
+# by contact
+kkcontact.w<-ggplot(wuf.kid.full, aes(y=Distance, x=prepostmatch, fill=contact)) +
+  geom_boxplot(width=1) +
+  geom_dotplot(binaxis = "y", binwidth = 0.014, stackdir = "center", position = position_dodge(0.8))+
+  ylab("Weighted Unifrac Distance") +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  scale_fill_manual(values = colors.contact) +
+  scale_y_continuous(limits = c(0, 1.5), 
+                     breaks=c(0.2,  0.8, 1.4),  
+                     labels=c("More\nSimilar", "", "Less\nSimilar")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=11), 
+    axis.text.y = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold")
+  )
+
+
+
+### KID - DOG Distance ###
+## all samples
+
+kdall.w<-ggplot(wuf.kiddog.full, aes(y=Distance, x=prepostmatch, fill=study.1)) +
+  geom_boxplot(width=0.95) +
+  geom_dotplot(binaxis = "y", binwidth = 0.018, stackdir = "center") +
+  ylab("Weighted UniFrac Distance") +
+  labs(fills="All Samples") +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  guides(fill=guide_legend(title = NULL)) +
+  scale_fill_manual(values = colors.all, labels=c("All Samples")) +
+  scale_y_continuous(limits = c(0, 1.5), 
+                     breaks=c(0.2,  0.8, 1.4),   
+                     labels=c("More\nSimilar", "", "Less\nSimilar")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=11), 
+    axis.text.y = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold"), 
+    legend.background = element_rect(colour="black"),
+    legend.position = "top", 
+    legend.title = element_text(size=11)
+  )
+## by visit type - remove mistmatch visits since don't care about them
+wuf.kiddog.vmatch<-filter(wuf.kiddog.full, visittype=="Control" | visittype=="Intervention")
+kdvisit.w<-ggplot(wuf.kiddog.vmatch, aes(y=Distance, x=prepostmatch, fill=visittype)) +
+  geom_boxplot(width=1) +
+  geom_dotplot(binaxis = "y", binwidth = 0.025, stackdir = "center", position = position_dodge(0.8)) +
+  ylab("Weighted Unifrac Distance") +
+  labs(fill="By Visit Type") +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  scale_fill_manual(values = colors.visit) +
+  scale_y_continuous(limits = c(0, 1.5), 
+                     breaks=c(0.2,  0.8, 1.4),
+                     labels=c("More\nSimilar", "", "Less\nSimilar")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=11), 
+    axis.text.y = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold"), 
+    legend.background = element_rect(colour="black"),
+    legend.position = "top", 
+    legend.title = element_text(size=11)
+  )
+# by contact
+kdcontact.w<-ggplot(wuf.kiddog.full, aes(y=Distance, x=prepostmatch, fill=contact)) +
+  geom_boxplot(width=1) +
+  geom_dotplot(binaxis = "y", binwidth = 0.02, stackdir = "center", position = position_dodge(0.8))+
+  ylab("Weighted Unifrac Distance") +
+  labs(fill="By Contact Level") +
+  scale_x_discrete(limits=c("PRE", "POST")) +
+  scale_fill_manual(values = colors.contact) +
+  scale_y_continuous(limits = c(0, 1.5), 
+                     breaks=c(0.2,  0.8, 1.4), 
+                     labels=c("More\nSimilar", "", "Less\nSimilar")) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_blank(),  
+    axis.text.x = element_text(size=11), 
+    axis.text.y = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    plot.title = element_text(hjust = 0.5, size=16, face="bold"),
+    legend.background = element_rect(colour="black"),
+    legend.position = "top", 
+    legend.title = element_text(size=11)
+  )
+
+## Arrange plots together ###
+kid.kid.plots.w<-ggarrange(kkall.w, kkvisit.w+rremove("y.text")+rremove("y.title"), kkcontact.w+rremove("y.text")+rremove("y.title"), ncol=3, legend="none")
+kid.dog.plots.w<-ggarrange(kdall.w, kdvisit.w+rremove("y.text")+rremove("y.title"), kdcontact.w+rremove("y.text")+rremove("y.title"), ncol=3, legend="top")
+
+
+ggdraw() +
+  draw_text(kid.kid.label, x = 0.5, y = 0.98, size=16, fontface="bold") +
+  draw_plot(kid.kid.plots.w, x = 0, y = 0.53, width = 1, height = 0.43) +
+  draw_text(kid.dog.label, x = 0.5, y = 0.52, size=16, fontface="bold") +
+  draw_plot(kid.dog.plots.w, x = 0, y = 0, width = 1, height = 0.5)
+
+### Alterative without text (better for presentations)
+ggdraw() +
+  draw_plot(kid.kid.plots.w, x = 0, y = 0.53, width = 1, height = 0.47) +
+  draw_plot(kid.dog.plots.w, x = 0, y = 0, width = 1, height = 0.52)
 
 
 
@@ -80,11 +2285,5 @@ phylo.final
 
 
 
-
-
-
-```{r, echo=TRUE}
-plot(pressure)
-```
 
 

@@ -73,10 +73,10 @@ qiime tools import \
   --output-path emp-paired-end-sequences.qza
   
 # Import metatable file (for now start with one just from lab - will combine full/extended one later in R)
-  qiime metadata tabulate \
---m-input-file 20191023_Davis_run1_mapping_file.tsv \  ## rename file to match - make sure this is in working directory
+qiime metadata tabulate \
+--m-input-file 20191023_Davis_run1_mapping_file.tsv \
 --o-visualization tabulated-AAT_metadata.qzv
-
+## rename file to match - make sure this is in working directory
 
 ```
 
@@ -222,10 +222,13 @@ mv extracted-seqs/2b6139a8-ec35-44dc-ad15-8accb648c7e7/data/dna-sequences.fasta 
 ```
 
 
-## Step 5. Match to Phylogeny
+## Step 5. Match to Phylogeny and Alpha Rarefaction
 
 Needed for any phylogenic -based metric analysis (Faith's, weight UniFrac, etc).
 The pipeline uses the mafft program to perform a multiple sequence alignment of the sequences in our FeatureData[Sequence] to create a FeatureData[AlignedSequence] QIIME 2 artifact. Next, the pipeline masks (or filters) the alignment to remove positions that are highly variable. These positions are generally considered to add noise to a resulting phylogenetic tree. Following that, the pipeline applies FastTree to generate a phylogenetic tree from the masked alignment. The FastTree program creates an unrooted tree, so in the final step in this section midpoint rooting is applied to place the root of the tree at the midpoint of the longest tip-to-tip distance in the unrooted tree.
+
+Average diversity values will be plotted for each sample at each even sampling depth, and samples can be grouped based on metadata in the resulting visualization. alpha rarefaction plot, and is primarily used to determine if the richness of the samples has been fully observed or sequenced. If the lines in the plot appear to “level out” (i.e., approach a slope of zero) at some sampling depth along the x-axis, that suggests that collecting additional sequences beyond that sampling depth would not be likely to result in the observation of additional features. If the lines in a plot don’t level out, this may be because the richness of the samples hasn’t been fully observed yet (because too few sequences were collected), or it could be an indicator that a lot of sequencing error remains in the data (which is being mistaken for novel diversity). The bottom plot in this visualization is important when grouping samples by metadata. It illustrates the number of samples that remain in each group when the feature table is rarefied to each sampling depth. If a given sampling depth d is larger than the total frequency of a sample s (i.e., the number of sequences that were obtained for sample s), it is not possible to compute the diversity metric for sample s at sampling depth d. If many of the samples in a group have lower total frequencies than d, the average diversity presented for that group at d in the top plot will be unreliable because it will have been computed on relatively few samples. When grouping samples by metadata, it is therefore essential to look at the bottom plot to ensure that the data presented in the top plot is reliable.
+~~~~ from QIIME walking tutorials website
 
 
 ```{bash, echo=TRUE, eval=FALSE}
@@ -238,6 +241,23 @@ The pipeline uses the mafft program to perform a multiple sequence alignment of 
 --o-tree unrooted-tree-aat.qza \
 --o-rooted-tree rooted-tree-aat.qza
 
+
+## Aso Plot Alpha Rarefaction Tables - to confirm whether you want to continue working in QIIME (automatic rarefaction) versus phyloseq in R (no rarefaction)
+qiime diversity alpha-rarefaction \
+  --i-table aat-table.qza \
+  --i-phylogeny rooted-tree-aat.qza \
+  --p-max-depth 20000 \
+  --m-metadata-file AAT_lab_metadata.txt  \
+  --o-visualization alpha-rarefaction.qzv
+
+mkdir alpha_rarefaction
+qiime tools extract \
+  --input-path alpha-rarefaction.qzv \
+  --output-path alpha_rarefaction
+mv alpha_rarefaction/874ef1fd-49d9-4b1c-ba98-8daeb139c324/data/shannon.csv alpha_rarefaction/shannon.csv
+mv alpha_rarefaction/874ef1fd-49d9-4b1c-ba98-8daeb139c324/data/observed_otus.csv alpha_rarefaction/observed_otus.csv
+mv alpha_rarefaction/874ef1fd-49d9-4b1c-ba98-8daeb139c324/data/faith_pd.csv alpha_rarefaction/faith_pd.csv
+## raw csv files - can make your own graph in R, but easier to just use Q2View to get alpha rarefaction curves
 ```
 
 
